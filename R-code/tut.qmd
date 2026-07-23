@@ -1,0 +1,2065 @@
+---
+title: "Tutorial for PanelPOMP Data Analysis: Supplement 2 for \"Mechanistic models for panel data: Analysis of ecological experiments with four interacting species\" "
+format: 
+  html:
+    toc: true
+    link-citations: true
+    embed-resources: true
+  revealjs:
+    embed-resources: true 
+bibliography: bib-daphnia.bib
+execute:
+  cache: true
+freeze: auto
+editor: visual
+author:
+  - name: Bo Yang
+    email: ybb@umich.edu
+    affiliations:
+      - ref: A
+  - name: Jesse Wheeler
+    email: jesse.wheeler@usu.edu
+    affiliations:
+      - ref: B
+  - name: Meghan A. Duffy
+    email: duffymeg@umich.edu
+    affiliations:
+      - ref: C
+  - name: Aaron A. King
+    email: kingaa@umich.edu
+    affiliations:
+      - ref: C
+  - name: Edward Ionides
+    email: ionides@umich.edu
+    affiliations:
+      - ref: D
+
+affiliations:
+  - id: A
+    name: Department of Marketing, Columbia University
+  - id: B
+    name: Department of Mathematics and Statistics, Utah State University
+  - id: C
+    name: Department of Ecology and Evolutionary Biology, University of Michigan
+  - id: D
+    name: Department of Statistics, University of Michigan
+---
+
+### Status
+
+This tutorial extends the peer-reviewed article but is not itself peer-reviewed. It provides additional description of implementation details and data-analysis considerations that arose during the reported research. This tutorial is an accessory intended to support understanding and reproducibility.
+
+## Introduction
+
+Ecological experiments often yield panel time series data, wherein multiple trajectories are observed across replicated experimental units. These replicates may exhibit correlation through shared parameters governing the underlying stochastic processes. This tutorial demonstrates the construction, estimation, and validation of mechanistic models for panel data using the partially observed Markov process (POMP) framework. Specifically, we focus on PanelPOMP models, which extend single-unit POMP models to collections of related but independent stochastic processes linked through common parameters.
+
+We analyze panel time series data from a controlled mesocosm experiment examining the population dynamics of two freshwater zooplankton species (*Daphnia dentifera* and *D. lumholtzi*), an algal food source (*Ankistrodesmus falcatus*), and a fungal parasite (*Metschnikowia bicuspidata*) that infects both *Daphnia* species. The experiment, conducted by @searle16, was designed to investigate how interspecific competition between the native *D. dentifera* and invasive *D. lumholtzi* is modified by their different susceptibility to the parasite.
+
+The panel iterated filter (PIF) algorithm [@breto20] enables plug-and-play likelihood-based inference for general PanelPOMP models. We employ both the standard PIF algorithm and its variant, the marginalized panel iterated filter (MPIF), to maximize the likelihood function. The general PanelPOMP notation and algorithmic details are provided in Section S2. At the same time, we construct profile likelihood confidence intervals for model parameters, employing the Monte Carlo Adjusted Profile (MCAP) method [@ionides17; @ning21] to account for Monte Carlo uncertainty in likelihood evaluations. This approach ensures proper coverage of confidence intervals despite the stochastic nature of the optimization algorithm.
+
+Also, we evaluate competing model specifications using Akaike's Information Criterion (AIC), defined as $\text{AIC} = 2p - 2\ell(\hat{\theta}),$ where $p$ denotes the number of estimated parameters and $\ell(\hat{\theta})$ is the maximized log-likelihood. AIC provides a theoretically motivated criterion for model comparison that balances goodness of fit against model complexity [@aic74]. Importantly, AIC facilitates comparison across collections of non-nested hypotheses, enabling evaluation of mechanistic models against non-mechanistic benchmark models.
+
+Finally, we evaluate model through multiple diagnostic approaches. Residual analysis examines discrepancies between observed data and model predictions. Additionally, we compute conditional log-likelihood contributions for each observation to identify specific data points where alternative models exhibit relative strengths or weaknesses. These point-wise comparisons provide finer-grained insight into model performance than aggregate likelihood measures alone [@wheeler24].
+
+We demonstrate the complete PanelPOMP workflow using two models of increasing complexity. Section 1 presents the SRJF model (Susceptible-Removed-Juvenile-Food), which describes single-species dynamics of *D. dentifera* in the absence of parasites. This baseline model introduces the fundamental components of PanelPOMP specification, including age-structured population dynamics and latent resource variables. Section 2 extends this framework to the SIRJPF2 model (Susceptible-Infected-Removed-Juvenile-Parasite-Food-2species), incorporating parasite transmission, disease dynamics, and interspecific competition between two host species. This tutorial illustrates how mechanistic complexity can be systematically incorporated within the PanelPOMP framework. Across the tutorial, we demonstrate parameter estimation via PIF and, for a model containing unit-specific parameters, MPIF; uncertainty quantification via MCAP; model comparison via AIC; and model validation through simulation-based diagnostics.
+
+## Section 1: SRJF Model
+
+### Experimental Design and Data Structure
+
+The experimental treatment consists of $U = 10$ replicated mesocosms containing *D. dentifera* populations in the absence of parasites. Each unit $u \in 1:U$ was observed at $N_u = N = 10$ time points, $t_{u,1:N}$ where $t_{u,n} = 5n + 2$ days for $n \in 1:N$, yielding a balanced panel design. At each observation time, population densities were quantified by microscopic enumeration, yielding observations $y^*_{u,n}$ comprising adult and juvenile counts. This single-species, parasite-free treatment establishes a baseline for characterizing population dynamics prior to introducing parasite-mediated interactions.
+
+The PanelPOMP data structure comprises:
+
+- **Units:** $u \in 1:10$ independent mesocosms
+- **Observation times:** $t_{u,n} = 5n + 2$ days for $n \in 1:10$
+- **Observed data:** $y^*_{u,n} = N^n_{S,u,n}$, the count of adult susceptible *D. dentifera* in a one-liter sample
+- **Latent process:** $X_u(t) = (S^n_u(t), J^n_u(t), F_u(t))^\top$ for $t \in [t_{u,0}, t_{u,N}]$
+
+where $S^n_u(t)$ denotes adult susceptible density (individuals/liter), $J^n_u(t)$ denotes juvenile density (individuals/liter), and $F_u(t)$ represents algal food resource density ($10^6$ cells/liter). The superscript $n$ indicates the native species (*D. dentifera*). The algal resource is unobserved but hypothesized to mediate population dynamics through resource limitation.
+
+@fig-srjf-data displays the observed adult density trajectories $\{y^*_{u,n}, u \in 1:10, n \in 1:10\}$ across all units. The data exhibit characteristic temporal dynamics: adult densities typically attain maximum values during days 20-30 before declining, with substantial inter-unit variability. These empirical patterns—particularly the temporal structure of population growth and decline—motivate an age-structured modeling framework incorporating juvenile maturation and resource-dependent reproduction.
+
+```{r}
+#| label: fig-srjf-data
+#| fig-cap: "Observed population densities for adult (top panel) and juvenile (bottom panel) *D. dentifera* across 10 replicate mesocosms. Square-root transformation applied to y-axes for visual clarity. Each panel represents an independent experimental unit."
+#| code-fold: true
+#| code-summary: "Show data processing and plotting code"
+#| echo: true
+#| cache: true
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 4
+#| out-width: "100%"
+
+# Load required packages
+suppressPackageStartupMessages({
+  suppressWarnings({
+    library(pomp)
+    library(panelPomp)
+    library(ggplot2)
+    library(dplyr)
+    library(gridExtra)
+    library(latex2exp)
+    library(foreach)
+    library(doParallel)
+  })
+})
+
+# Respect the scheduler allocation exported by render_tut.sh. Leave two cores
+# free on larger jobs and use one worker for direct/local renders.
+grid_ncpus <- suppressWarnings(as.integer(Sys.getenv("NSLOTS", unset = "1")))
+if (is.na(grid_ncpus) || grid_ncpus < 1L) grid_ncpus <- 1L
+n_cores <- max(1L, grid_ncpus - 2L)
+registerDoParallel(cores = n_cores)
+cat("Registered", n_cores, "parallel worker(s) from NSLOTS =", grid_ncpus, "\n")
+
+
+
+Mesocosm_data <- read.csv(
+  "./data/Mesocosmdata_dent_only.csv",
+  check.names = FALSE,
+  na.strings = c("", "NA")
+)
+run_level = 2
+
+# Extract D. dentifera data without parasites
+dentNoPara = Mesocosm_data[1:100, ]
+dentNoPara = subset(dentNoPara, select = c(rep, day, dent.adult, dent.juv))
+dentNoPara = dentNoPara[100:1, ]
+
+# Convert sampling index to calendar date: day_n = 5n + 2
+dentNoPara$day = (dentNoPara$day - 1) * 5 + 7
+
+# Organize data by experimental unit
+data = list()
+trails = c("A", "B", "C", "D", "E", "F", "G", "H", "I", "J")
+for (i in seq_along(trails)) {
+  data[[i]] = subset(
+    dentNoPara,
+    select = c("day", "dent.adult", "dent.juv"),
+    dentNoPara$rep == trails[i]
+  )
+}
+
+# Combine data with unit labels
+dent_SRJF_data_combined = do.call(rbind, lapply(seq_along(data), function(i) {
+  cbind(data[[i]], Trial = paste("Trial", trails[i]))
+}))
+dent_SRJF_data_combined$Bucket = paste0(rep("Mesocosm ", 100), rep(1:10, each = 10))
+dent_SRJF_data_combined$Bucket = factor(
+  dent_SRJF_data_combined$Bucket,
+  levels = paste0("Mesocosm ", 1:10)
+)
+
+# Custom labeller for facets
+bucket_labeller = as_labeller(function(bucket) gsub("Mesocosm ", "Mesocosm-", bucket))
+
+# Plotting parameters
+dent.style = "solid"
+dent.width = 0.5
+
+# Adult density plot
+p1 = ggplot(dent_SRJF_data_combined, aes(x = day)) +
+  geom_line(aes(y = dent.adult), color = "blue", 
+            linewidth = dent.width, linetype = dent.style) +
+  facet_wrap(~Bucket, nrow = 1, labeller = bucket_labeller) +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank(),
+    axis.title.y = element_text(size = 10),
+    axis.text.y  = element_text(size = 8),
+    strip.text   = element_text(size = 8),
+    strip.background = element_blank(),
+    strip.placement  = "outside",
+    plot.margin      = margin(0.2, 0.5, 0, 0.5, "cm"),
+    legend.position  = "none"
+  ) +
+  ylab("Adult density (ind./L)") +
+  scale_x_continuous(limits = c(0, 52), breaks = c(0, 25, 50)) +
+  scale_y_continuous(trans = "sqrt")
+
+# Juvenile density plot
+p2 = ggplot(dent_SRJF_data_combined, aes(x = day)) +
+  geom_line(aes(y = dent.juv), color = "orange", 
+            linewidth = dent.width, linetype = dent.style) +
+  facet_wrap(~Bucket, nrow = 1) +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10),
+    axis.text.x  = element_text(size = 8),
+    axis.text.y  = element_text(size = 8),
+    strip.text   = element_blank(),
+    strip.background = element_blank(),
+    strip.placement  = "outside",
+    plot.margin      = margin(0, 0.5, 0.2, 0.5, "cm"),
+    legend.position  = "none"
+  ) +
+  ylab("Juvenile density (ind./L)") +
+  xlab("Day") +
+  scale_x_continuous(limits = c(0, 52), breaks = c(0, 25, 50)) +
+  scale_y_continuous(trans = "sqrt")
+
+# Combine plots
+grid.arrange(p1, p2, ncol = 1, heights = c(1, 1))
+```
+
+### Mechanistic Model
+
+#### Model Specification
+
+The SRJF model describes the dynamics of susceptible adults ($S^n_u$), juveniles ($J^n_u$), and the latent algal food resource ($F_u$), where the superscript $n$ denotes the native species *D. dentifera*. Dead or removed individuals transition to the unobserved compartment $R$.
+
+The latent process is demonstrated according to the following system of stochastic differential equations:
+
+\begin{aligned}
+dS^n_u(t) &= \lambda^n_J J^n_u(t)\,dt - (\theta^n_S + \delta) S^n_u(t)\,dt + S^n_u(t)\,d\zeta^n_{S,u}(t), \\[0.5em]
+dJ^n_u(t) &= r^n f^n_S F_u(t) S^n_u(t)\,dt - (\theta^n_J + \delta + \lambda^n_J) J^n_u(t)\,dt + J^n_u(t)\,d\zeta^n_{J,u}(t), \\[0.5em]
+dF_u(t) &= - f^n_S F_u(t)\,\big(S^n_u(t) + \xi_J J^n_u(t)\big)\,dt + \mu\,dt + F_u(t)\,d\zeta_{F,u}(t),
+\end{aligned}
+
+where the stochastic increments are Gaussian white noise processes:
+
+\begin{aligned}
+d\zeta^n_{S,u}(t) \sim \mathcal{N}(0,(\sigma^n_S)^2 dt), \quad
+d\zeta^n_{J,u}(t) \sim \mathcal{N}(0,(\sigma^n_J)^2 dt), \quad
+d\zeta_{F,u}(t) \sim \mathcal{N}(0,\sigma^2_F dt).
+\end{aligned}
+
+These equations correspond to the general SRJF formulation presented in equations (S12)–(S15) of Section S6 in the Supplement, specialized to the single-species case with $k = n$.
+
+#### Biological Mechanisms
+
+The model incorporates the following ecological processes:
+
+- **Reproduction:** Adults produce juveniles at a rate proportional to food availability, governed by the product $r^n f^n_S F_u(t) S^n_u(t)$, where $r^n$ represents birth efficiency and $f^n_S$ is the adult filtration rate.
+- **Maturation:** Juveniles transition to the adult class at rate $\lambda^n_J$.
+- **Resource consumption:** Both adults and juveniles filter algae from the medium, with juveniles consuming at a rate scaled by $\xi_J$.
+- **Mortality and removal:** Natural mortality ($\theta^n_S$, $\theta^n_J$) and experimental sampling ($\delta$) remove individuals from the population.
+- **Resource replenishment:** Algae are supplied at a constant rate $\mu$ according to the experimental protocol by @searle16.
+
+The complete flow diagram illustrating these transitions is provided in Figure S-18 of the Supplement.
+
+#### Parameter Specification
+
+The model parameters are defined in Tables S-8 and S-9 of the Supplement. Key parameters include:
+
+- $r^n$: birth rate coefficient (juveniles per adult per unit food per unit time)
+- $f^n_S$: adult filtration rate (L $\cdot$ individual$^{-1} \cdot$ day$^{-1}$)
+- $\xi_J$: juvenile filtration ratio relative to adults (dimensionless)
+- $\lambda^n_J$: juvenile maturation rate (day$^{-1}$)
+- $\theta^n_S$, $\theta^n_J$: natural mortality rates for adults and juveniles (day$^{-1}$)
+- $\delta$: sampling/dilution rate (day$^{-1}$)
+- $\mu$: algal replenishment rate ($10^6$ cells $\cdot$ L$^{-1} \cdot$ day$^{-1}$)
+- $\sigma^n_S$, $\sigma^n_J$, $\sigma_F$: process noise standard deviations
+- $\tau^n_S$: measurement overdispersion parameter (negative binomial)
+
+Several parameters are fixed based on the experimental protocol: $\delta = 0.013$ day$^{-1}$ (from the 1-liter sampling volume), $\mu = 0.37 \times 10^6$ cells $\cdot$ L$^{-1} \cdot$ day$^{-1}$ (from twice-weekly algal supplementation), $\lambda^n_J = 0.1$ day$^{-1}$ (approximating a 10-day maturation period), and $\xi_J = 1$ (assuming similar filtration efficiency for juveniles and adults).
+
+As detailed in Section S6.1, model identifiability analysis via profile likelihood reveals that adult susceptible noise ($\sigma^n_S$) can be fixed at zero without substantially affecting model fit, whereas juvenile noise ($\sigma^n_J$) and food resource noise ($\sigma_F$) remain statistically significant. Complete parameter estimates, confidence intervals obtained via Monte Carlo Adjusted Profile (MCAP), and simulation-based diagnostics are presented in Section S6 and Tables S-8–S-9 of the Supplement.
+
+### PanelPOMP Implementation Framework
+
+#### Process Model Simulator
+
+The `rprocess` component implements a simulator for the latent SRJF dynamics via stochastic differential equations. This simulator forms the foundation of the plug-and-play inference framework, which simulates trajectories from the process model without evaluating transition densities.
+
+The continuous-time stochastic differential equations are approximated using time step $\Delta t = 0.25$ days. This discretization granularity was chosen to balance numerical accuracy against computational efficiency: smaller values ensure better approximation of the continuous-time dynamics, while the chosen value maintains computational tractability for the iterative filtering algorithm.
+
+The C snippet below implements one Euler step for the SRJF model, computing state increments for susceptible adults ($S^n_u$), juveniles ($J^n_u$), and food ($F_u$). The algorithm begins by generating independent Gaussian noise innovations with variances $(\sigma^n_S)^2 \Delta t$, $(\sigma^n_J)^2 \Delta t$, and $\sigma^2_F \Delta t$ for each state compartment. These stochastic terms capture environmental variability and model uncertainty in the population dynamics.
+
+The deterministic component of each state increment is computed based on the biological rates specified in the model equations. Reproduction, maturation, mortality, and consumption processes each contribute terms scaled by the time step $\Delta t$. Fixed experimental parameters are incorporated directly into these calculations: the sampling dilution rate $\delta = 0.013$ day$^{-1}$ reflects the 1-liter sampling volume, while the algal replenishment rate $\mu = 0.37 \times 10^6$ cells $\cdot$ L$^{-1} \cdot$ day$^{-1}$ corresponds to the twice-weekly nutrient supplementation protocol. Additionally, the juvenile maturation rate is fixed at $\lambda^n_J = 0.1$ day$^{-1}$ by taking average of expected maturation time based on @ebert05, and the juvenile filtration ratio is set to $\xi_J = 1$, assuming comparable feeding efficiency between juveniles and adults.
+
+After computing the stochastic and deterministic increments, the state variables are updated by adding these increments to their current values. To maintain biological plausibility, the simulator enforces soft constraints on state values: adult and juvenile densities are constrained to $S^n_u, J^n_u \in [0, 10^5]$ individuals/L, while food density is bounded by $F_u \in [0, 10^{20}]$ cells/L. Trajectories that violate these ranges are truncated to the nearest boundary value, and violations are recorded in the `error_count` accumulator. Finally, the absolute value of the adult density, $|S^n_u|$, is stored in the variable `T_Sn` for use in the measurement model, ensuring non-negative observed counts.
+
+```{r}
+#| label: srjf-rprocess
+#| cache: true
+#| code-fold: true
+#| code-summary: "Show Euler-Maruyama simulator code"
+
+dyn_rpro = Csnippet("
+  // Declare temporary variables for state increments and noise
+  double Sn_term, Jn_term, F_term;
+  double noiSn, noiJn, noiF;
+  
+  // Fixed experimental parameters
+  double delta = 0.013;  // Sampling dilution rate (day^-1)
+  double mu = 0.37;      // Algal replenishment (10^6 cells·L^-1·day^-1)
+  double lambda_J = 0.1; // Juvenile maturation rate (day^-1)
+  double xi_J = 1.0;     // Juvenile filtration ratio
+  
+  // Generate Gaussian noise innovations
+  noiSn = rnorm(0, sigSn * sqrt(dt));
+  noiJn = rnorm(0, sigJn * sqrt(dt));
+  noiF  = rnorm(0, sigF * sqrt(dt));
+  
+  // ========== Susceptible adult dynamics (S^n) ==========
+  // Maturation influx: lambda_J * J^n
+  // Mortality and sampling outflux: (theta_Sn + delta) * S^n
+  // Process noise: S^n * noiSn
+  Sn_term = lambda_J * Jn * dt 
+            - theta_Sn * Sn * dt 
+            - delta * Sn * dt 
+            + Sn * noiSn;
+  
+  // ========== Juvenile dynamics (J^n) ==========
+  // Birth influx: r^n * f^n_S * F * S^n
+  // Maturation outflux: lambda_J * J^n
+  // Mortality and sampling outflux: (theta_Jn + delta) * J^n
+  // Process noise: J^n * noiJn
+  Jn_term = rn * f_Sn * F * Sn * dt 
+            - lambda_J * Jn * dt 
+            - theta_Jn * Jn * dt 
+            - delta * Jn * dt 
+            + Jn * noiJn;
+  
+  // ========== Food resource dynamics (F) ==========
+  // Consumption outflux: f^n_S * F * (S^n + xi_J * J^n)
+  // Dilution outflux: delta * F
+  // Replenishment influx: mu
+  // Process noise: F * noiF
+  F_term = -f_Sn * F * (Sn + xi_J * Jn) * dt 
+           - delta * F * dt 
+           + mu * dt 
+           + F * noiF;
+  
+  // Update states
+  Sn += Sn_term;
+  Jn += Jn_term;
+  F  += F_term;
+  
+  // ========== Biological constraints ==========
+  if (Sn < 0.0 || Sn > 1e5) {
+    Sn = (Sn < 0.0) ? 0.0 : 1e5;
+    error_count += 1;      
+  }
+  
+  if (Jn < 0.0 || Jn > 1e5) {
+    Jn = (Jn < 0.0) ? 0.0 : 1e5;
+    error_count += 0.001;  
+  }
+  
+  if (F < 0.0 || F > 1e20) {
+    F = (F < 0.0) ? 0.0 : 1e20;
+    error_count += 1000;   
+  }
+  
+  // Store observable for measurement model
+  T_Sn = fabs(Sn);  // Adult density (non-negative)
+")
+```
+
+The `error_count` accumulator serves as a soft constraint mechanism: parameter values that frequently produce biologically implausible trajectories accumulate penalties, which manifest as reduced likelihood values during parameter optimization. This approach is preferable to hard constraints (which would lead to likelihood discontinuities) or exact boundary enforcement (which would introduce artificial dynamics at boundaries).
+
+#### Initial State Specification
+
+Particle filters require initial states that are biologically consistent with the experimental protocol. At $t_{u,0} = 1$ day, we specify adult density (3 ind/L), food density (16.667 × 10$^6$ cells/L), and zero juveniles, reflecting the experimental setting prior to any reproduction events. The error accumulator and measurement variable are initialized to zero.
+
+```{r}
+#| label: srjf-init
+#| cache: true
+#| code-fold: true
+#| code-summary: "Show initial state specification"
+
+dyn_init = Csnippet("
+  // Initial population densities at t_0 = 0
+  Sn = 3.0;        // Adult density (individuals/L): 45 adults in 15L bucket
+  Jn = 0.0;        // Juvenile density (individuals/L): no juveniles initially
+  F = 16.667;      // Food density (10^6 cells/L): 2.5 × 10^8 cells in 15L
+  
+  // Initialize measurement variable
+  T_Sn = 0.0;
+  
+  // Initialize constraint violation counter
+  error_count = 0.0;
+")
+```
+
+These initial conditions are shared across all units, with between-unit variability arising solely from the stochastic dynamics.
+
+#### Measurement Model
+
+The measurement model connects the latent adult density $S^n_u(t_n)$ to the observed count $N^n_{S,u,n}$ via a negative binomial distribution:
+$$N^n_{S,u,n} \mid S^n_u(t_n) \sim \text{NBinomial}\big(S^n_u(t_n), \tau^n_S\big),$$
+where the negative binomial is parameterized with mean $\mu = S^n_u(t_n)$ and variance $\mu + \mu^2/\tau^n_S$. The dispersion parameter $\tau^n_S > 0$ quantifies overdispersion, with smaller values indicating greater variance relative to the mean. This specification accommodates the substantial count variability commonly observed in ecological sampling processes, which arises from both demographic stochasticity and measurement error.
+
+The measurement density is thus given by
+$$f_{Y_{u,n}|X_{u,n}}(y^*_{u,n} | x_{u,n}; \theta) = f_{\text{NBinomial}}(y^*_{u,n}; S^n_u(t_n), \tau^n_S),$$
+corresponding to equation (8) in the main text. Trajectories that violate the biological constraints imposed in the process simulator are identified by `error_count > 0`. Such trajectories are assigned a large negative log-likelihood penalty of $-150$, effectively removing them from consideration in the particle filter while avoiding numerical instabilities associated with infinite penalties or discontinuous likelihood surfaces.
+
+**Code implementation:**
+
+```{r}
+#| label: srjf-dmeas
+#| cache: true
+#| code-fold: true
+#| code-summary: "Show measurement density code"
+
+dmeas = Csnippet("
+  // Check for constraint violations in simulated trajectory
+  if (error_count > 0.0) {
+    // Assign penalty for biologically implausible trajectories
+    lik = -150.0;
+  }
+  else {
+    // Compute negative binomial log-likelihood
+    // dentadult: observed count from data (N^n_{S,u,n})
+    // k_Sn: dispersion parameter (tau^n_S)
+    // T_Sn: latent adult density (S^n_u(t_n))
+    // give_log: flag indicating whether to return log-likelihood (1) or likelihood (0)
+    lik = dnbinom_mu(dentadult, k_Sn, T_Sn, give_log);
+  }
+")
+```
+
+The C function `dnbinom_mu` evaluates the negative binomial probability mass function (or its logarithm) given the observed count (`dentadult` = $y^*_{u,n}$), the dispersion parameter (`k_Sn` = $\tau^n_S$), and the mean (`T_Sn` = $S^n_u(t_n)$). The Boolean flag `give_log` determines whether the function returns the log-likelihood (required by the particle filter) or the likelihood itself. This implementation corresponds to the general measurement density specification $f_{Y_{u,n}|X_{u,n}}$ in equation (11) of the main text.
+
+The `rmeasure` component simulates observations from the measurement model, generating synthetic data $\tilde{N}^n_{S,u,n} \sim \text{NBinomial}(S^n_u(t_n), \tau^n_S)$ conditional on latent states. This simulator enables forward simulation and posterior predictive diagnostics.
+
+```{r}
+#| label: srjf-rmeas
+#| cache: true
+
+rmeas = Csnippet("
+  // Simulate negative binomial observation
+  // dentadult ~ NBinomial(T_Sn, k_Sn)
+  dentadult = rnbinom_mu(k_Sn, T_Sn);
+")
+```
+
+The function `rnbinom_mu` draws from the negative binomial distribution with mean $S^n_u(t_n)$ and dispersion $\tau^n_S$.
+
+To ensure biological plausibility and improve numerical stability during optimization, we apply log transformations to all rate, variance, and dispersion parameters. These transformations map the constrained parameter space $\Theta^+ = \{\theta : \theta_i > 0\}$ to the unconstrained real line $\mathbb{R}^p$, enabling the iterated filtering algorithm to apply Gaussian perturbations without violating positivity constraints.
+
+Formally, the transformation is defined as
+$$\tilde{\theta}_i = \log(\theta_i) \quad \text{for} \quad \theta_i \in \{r^n, f^n_S, \theta^n_S, \theta^n_J, \sigma^n_S, \sigma^n_J, \sigma_F, \tau^n_S\},$$
+where $\tilde{\theta}_i$ denotes the transformed parameter on the estimation scale. During the iterated filtering procedure, parameter perturbations are applied to $\tilde{\theta} = (\tilde{\theta}_1, \ldots, \tilde{\theta}_p)^\top$ via additive Gaussian noise. Before evaluating the process simulator (`rprocess`) or measurement density (`dmeasure`), parameters are back-transformed to the natural scale via $\theta_i = \exp(\tilde{\theta}_i)$, ensuring that all rates, variances, and dispersion parameters remain strictly non-negative throughout the process
+
+This transformation eliminates the need for constrained optimization algorithms and ensures that perturbed parameter values retain biological interpretability. At the same time, it induces a scale-invariant perturbation scheme where in relative perturbations scale with parameter magnitude. Also, it prevents numerical underflow when parameters approach zero.
+
+**Code implementation:**
+
+```{r}
+#| label: srjf-partrans
+#| cache: true
+#| code-fold: true
+#| code-summary: "Show parameter transformation specification"
+
+pt = parameter_trans(
+  log = c(
+    "rn",        # Birth rate coefficient
+    "f_Sn",      # Adult filtration rate
+    "theta_Sn",  # Adult mortality rate
+    "theta_Jn",  # Juvenile mortality rate
+    "sigSn",     # Adult process noise SD
+    "sigJn",     # Juvenile process noise SD
+    "sigF",      # Food process noise SD
+    "k_Sn"       # Measurement overdispersion
+  )
+)
+```
+
+Each experimental unit requires a separate `pomp` object with identical model structure but unit-specific data $\{y^*_{u,n}\}$.
+
+```{r}
+#| label: srjf-params-and-construction
+#| cache: true
+
+parameters = c(
+  rn       = 2.121818e+02, 
+  f_Sn     = 4.271306e-04,  
+  theta_Sn = 1.514775e-01, 
+  theta_Jn = 1.633677e-02,  
+  sigSn    = 0,             
+  sigJn    = 2.688333e-01,  
+  sigF     = 1.459130e-03,  
+  k_Sn     = 8.917721e+01   
+)
+
+# Construct one pomp object per unit
+pomplist = list()
+for (i in 1:10) {
+  colnames(data[[i]]) = c('day', 'dentadult', 'dentjuv')
+  
+  pomp(
+    data      = data[[i]],
+    times     = "day",
+    t0        = 0,
+    rprocess  = euler(dyn_rpro, delta.t = 1/4),
+    rinit     = dyn_init,
+    dmeasure  = dmeas,
+    rmeasure  = rmeas,
+    partrans  = pt,
+    obsnames  = c("dentadult"),
+    accumvars = c("error_count"),
+    paramnames = c("rn", "f_Sn", "theta_Sn", "theta_Jn",
+                   "sigSn", "sigJn", "sigF", "k_Sn"),
+    statenames = c("Sn", "Jn", "F", "T_Sn", "error_count")
+  ) -> pomplist[[i]]
+  
+  coef(pomplist[[i]]) = parameters
+}
+names(pomplist) = paste0("u", 1:10)
+```
+
+Each object combines the process simulator (`rprocess`), initial conditions (`rinit`), measurement model (`dmeasure`, `rmeasure`), and transformations (`partrans`) with unit-specific data. The `accumvars` specification ensures `error_count` resets at observation times after likelihood evaluation.
+
+Next, we assemble the unit-level `pomp` objects into a `panelPomp` object, which defines the joint likelihood function over all units. Recall from equation (11) in the main text that the panel likelihood factorizes as
+$$\mathcal{L}(\theta) = \prod_{u=1}^{U} \int f_{Y_{u,1:N}|X_{u,1:N}}(y^*_{u,1:N}|x_{u,1:N};\phi,\psi_{u}) \, f_{X_{u,1:N}}(x_{u,1:N};\phi,\psi_u)\, dx_{u,1:N},$$
+where $\theta = (\phi, \psi_{1:U})$ comprises shared parameters $\phi$ common to all units and unit-specific parameters $\psi_u$. Based on the model selection analysis presented in Section S6.1 and Table S-10, we set all parameters to be shared across units: $\theta = \phi$, with $\psi_u = \emptyset$ for all $u$.
+
+We initialize the `panelPomp` object with shared biological plausible parameter values:
+
+```{r}
+#| label: srjf-panelpomp-construction
+#| cache: true
+#| code-fold: true
+#| code-summary: "Show panelPomp object construction"
+
+# Shared parameters: phi (all units use identical values)
+shared_parameter = c(
+  rn       = 1.535539e+03,  
+  f_Sn     = 1.306857e-04,  
+  theta_Sn = 6.353239e-01,  
+  theta_Jn = 1.376217e-03,  
+  sigSn    = 0.000000e+00,  
+  sigJn    = 3.018772e-01,  
+  sigF     = 8.658726e-07,  
+  k_Sn     = 1.417860e+01   
+)
+
+# Construct panelPomp object with shared parameters
+panelfood = panelPomp(pomplist, shared = shared_parameter)
+```
+
+The resulting `panelfood` object represents the complete PanelPOMP model with $U = 10$ units, each evolving according to the SRJF dynamics with common parameter vector $\phi$. The `shared` argument specifies that these parameters apply identically across all units, reducing the total parameter dimension from $8U = 80$ (if all parameters were unit-specific) to $p = 8$.
+
+Particle filters are sensitive to parameter scaling, particularly when parameters span multiple orders of magnitude. To illustrate the numerical pathologies arising from mis-scaled parameters, we construct a deliberately corrupted alternative:
+
+```{r}
+#| label: srjf-misscaled
+#| cache: true
+
+shared_parameter_wrong = c(
+  rn       = 1.535539e-03,  
+  f_Sn     = 1.306857e+04,  
+  theta_Sn = 6.353239e-01, 
+  theta_Jn = 1.376217e+03,  
+  sigSn    = 0.000000e+00,  
+  sigJn    = 3.018772e+01,  
+  sigF     = 8.658726e+07,  
+  k_Sn     = 1.417860e-01 
+)
+
+panelfood_wrong = panelPomp(pomplist, shared = shared_parameter_wrong)
+```
+
+The correctly scaled object `panelfood` produces stable particle filter behavior: effective sample size (ESS) remains substantial throughout the filtering process, panel log-likelihood estimates are bounded with small Monte Carlo standard errors, and simulated trajectories remain within biologically plausible ranges ($S^n_u, J^n_u \in [0, 10^5]$, $F_u \in [0, 10^{20}]$). Under these conditions, iterated filtering converges to a stable maximum likelihood estimate with well-behaved profile likelihoods.
+
+In contrast, `panelfood_wrong` exhibits characteristic signatures of parameter mis-specification. First, extremely skewed particle weights lead to particle degeneracy, wherein ESS collapses toward unity, indicating that a single particle dominates the approximation of the filtering distribution. This degeneracy reflects the limitation of the particle filter to adequately represent the posterior distribution when the model generates trajectories far from the observed data. Second, the simulated trajectories themselves exhibit pathological behavior: when rates are excessively large, populations grow explosively and violate upper bounds; when rates are too small, populations stagnate or decay inappropriately, violating lower bounds or failing to match the observed temporal patterns. Third, under iterated filtering, these numerical issues manifest as optimization failure: likelihood estimates exhibit high variance across iterations, Monte Carlo standard errors exceed acceptable thresholds (typically one to two log-likelihood units), and parameter values either fail to converge or drift systematically toward transformation boundaries.
+
+If particle filter output resembles that of `panelfood_wrong`, one can undertake a systematic verification process before proceeding with inference. The first diagnostic step is to ensure consistency of parameter units between the mathematical model equations and their numerical implementation. For example, mortality rates specified as day$^{-1}$ in the model equations must not be inadvertently coded as hour$^{-1}$ in the simulator, which would introduce a twenty-four-fold scaling error. The second step involves checking that both dimensionless parameters (such as $\xi_J$ and $\tau^n_S$) and dimensional parameters (rates measured in day$^{-1}$, densities in individuals per liter, variances with appropriate dimensional scaling) have magnitudes consistent with the temporal and spatial scales of the observed data. Birth rates on the order of $10^3$ or filtration rates on the order of $10^{-4}$ L $\cdot$ individual$^{-1} \cdot$ day$^{-1}$ should be verified against biological literature or preliminary data analysis. This advice is based on similar obstacles that we encountered and resolved while developing this data analysis. The third verification step confirms that the `partrans` specification correctly implements logarithmic transformations for all positive-valued parameters, ensuring that parameter perturbations during iterated filtering remain on an appropriate scale. Finally, verify that the initial state specification $X_u(t_{u,0})$ in `rinit` reflects realistic population densities at the experiment's inception, as grossly incorrect initial conditions can produce trajectories from which it is difficult to recover biological plausibility regardless of parameter values.
+
+Addressing parameter starting points is a prerequisite to reliable inference. Mis-scaled initializations can prevent iterated filtering from locating the true maximum likelihood estimate even when the algorithm is correctly implemented, as the optimization may become trapped in regions of parameter space where numerical instability precludes accurate likelihood evaluation.
+
+#### Parameter Estimation via Panel Iterated Filtering
+
+Panel iterated filtering (PIF) extends the single-unit iterated filtering algorithm to panel data by performing a coordinated random walk in parameter space while simultaneously filtering all $U$ units. The algorithm operates by perturbing the shared parameter vector $\phi$ at each iteration, propagating particles through the panel dynamics under these perturbed parameter values, and gradually reducing the perturbation magnitude via a cooling schedule to concentrate the parameter swarm near the maximum likelihood estimate.
+
+The PIF algorithm proceeds through $M$ iterations indexed by $m = 1, \ldots, M$. At iteration $m$, each particle $j = 1, \ldots, J$ carries a parameter value $\phi^{(m)}_j$ that evolves via a random walk with variance scaled by the cooling factor $\rho^{2m}$, where $\rho < 1$ controls the rate of perturbation reduction. Specifically, when filtering unit $u$ at time $t_{u,n}$, the parameter undergoes a perturbation
+$$\phi^{(P,m)}_{u,n,j} \sim \mathcal{N}\big(\phi^{(F,m)}_{u,n-1,j}, \rho^{2m} V_{\phi,u,n}\big),$$
+where $V_{\phi,u,n}$ is a covariance matrix specifying the perturbation intensity for each parameter component. The cooling factor ensures that early iterations explore the parameter space broadly while later iterations refine estimates through increasingly small perturbations. The geometric cooling schedule is parameterized by specifying the fraction $\alpha \in (0,1)$ such that $\rho^{50} = \alpha$, yielding $\rho = \alpha^{1/50}$. In our implementation, we set $\alpha = 0.7$, corresponding to $\rho \approx 0.9928$, which produces cooling for high-dimensional ecological models to ensure large range search.
+
+The computational demands of PanelPOMP inference needs careful specification of algorithmic parameters that balance numerical accuracy against computational feasibility. We adopt a multi-stage optimization strategy with progressively increasing computational effort:
+
+```{r}
+#| label: srjf-algorithmic-params
+#| cache: true
+
+run_level = 2
+
+algorithmic.params = list(
+  Np     = c(50,  600, 1000), 
+  Np_rep = c( 2,   10,   20), 
+  Mp     = c(50,  500, 1000),  
+  Nmif   = c( 2,  320,  250)
+)
+```
+
+The `run_level` parameter controls the computational intensity. The code shown here uses `run_level = 2` for a moderate-cost tutorial render: level 1 provides rapid prototyping with minimal particles and iterations, while level 3 delivers production-quality estimates suitable for publication. At production level, we employ $J = 1000$ particles during the iterated filtering procedure (`Mp`), evaluate the final likelihood using $1000$ particles (`Np`) with $20$ independent replicates (`Np_rep`) to quantify Monte Carlo uncertainty, and perform $250$ iterations (`Nmif`) to ensure convergence. The particle count for iterated filtering represents a trade-off between the algorithm's ability to track the filtering distribution (which degrades as dimensionality increases) and computational cost (which scales linearly with particle count). For the SRJF model with $p = 8$ parameters and $U = 10$ units, we found that $J = 1000$ particles provide adequate representation of the filtering distribution while remaining computationally tractable.
+
+The random walk standard deviation $\sigma_{\text{rw}}$ controls the magnitude of parameter perturbations during iterated filtering. Larger values promote exploration of parameter space but may prevent convergence; smaller values facilitate local refinement but risk premature convergence to local maxima. We employ a uniform perturbation intensity across all parameters:
+
+```{r}
+#| label: srjf-perturbation
+#| cache: true
+
+dent_rw.sd = 0.02 
+
+n_searches = 10L * getDoParWorkers()
+set.seed(20260723)
+
+parameter_candidates = replicate(
+  n_searches,
+  {
+    candidate = shared_parameter
+    positive = candidate > 0
+    candidate[positive] = exp(
+      runif(
+        sum(positive),
+        log(shared_parameter[positive] / 3),
+        log(shared_parameter[positive] * 3)
+      )
+    )
+    candidate
+  },
+  simplify = FALSE
+)
+```
+
+Since all estimated parameters undergo log-transformation via the `partrans` specification, the perturbation $\sigma_{\text{rw}} = 0.02$ applies on the log scale. This scale-invariant perturbation scheme ensures that parameters spanning different orders of magnitude (e.g., $r^n \sim 10^3$ vs. $f^n_S \sim 10^{-4}$) experience proportionally comparable exploration.
+
+Maximum likelihood estimation for PanelPOMP models presents a challenging nonconvex optimization problem. The likelihood surface typically exhibits multiple local maxima arising from parameter confounding, multi-modality in the filtering distribution, and complex interactions between process dynamics and measurement noise. To assess dependence on initialization, we launch searches from multiple biologically plausible parameter vectors dispersed on the log scale. Independent random-number streams provide additional stochastic replication. Agreement among high-likelihood terminal estimates across distinct starting values gives evidence that the result is not an artifact of one initialization.
+
+```{r}
+#| label: srjf-mif-search
+#| cache: true
+#| eval: true
+
+U = length(panelfood) 
+{
+  foreach(
+    i = seq_len(n_searches),
+    .packages = c("pomp", "panelPomp"),
+    .inorder = FALSE,
+    .options.multicore = list(set.seed = TRUE)
+  ) %dopar% {
+
+    # Initialize from candidate parameter values
+    guessed.parameter.values = parameter_candidates[[i]]
+
+    # Perform iterated filtering
+    mif2(
+      panelfood,
+      Nmif = algorithmic.params$Nmif[run_level],
+      shared.start = guessed.parameter.values,
+      rw.sd = rw_sd(
+        rn       = dent_rw.sd,
+        f_Sn     = dent_rw.sd,
+        theta_Sn = dent_rw.sd,
+        theta_Jn = dent_rw.sd,
+        sigSn    = dent_rw.sd,
+        sigJn    = dent_rw.sd,
+        sigF     = dent_rw.sd,
+        k_Sn     = dent_rw.sd
+      ),
+      cooling.type = "geometric",
+      cooling.fraction.50 = 0.7, 
+      Np = algorithmic.params$Mp[run_level]
+    ) -> m1
+
+    ll = replicate(
+      n = algorithmic.params$Np_rep[run_level],
+      unitLogLik(pfilter(m1, Np = algorithmic.params$Np[run_level]))
+    )
+
+    list(
+      mif = m1,
+      ll = panel_logmeanexp(x = ll, MARGIN = 1, se = TRUE)
+    )
+  }
+} -> mf
+```
+
+The `foreach` loop launches a total of $10 \times N_{\text{cores}}$ independent optimization runs, where $N_{\text{cores}}$ is the number of available processor cores. Each run executes the `mif2` function, which implements the panel iterated filtering algorithm at selected run level. The `shared.start` argument specifies the initial parameter vector $\phi^{(0)}$, while `rw.sd` provides the diagonal elements of the perturbation covariance matrix $V_{\phi,u,n}$. The cooling schedule is determined by `cooling.fraction.50 = 0.7`, which sets $\rho^{50} = 0.7$ as described above.
+
+Upon completion of each iterated filtering run, the terminal parameter estimate $\hat{\phi}^{(M)}$ is evaluated via particle filtering to obtain an unbiased Monte Carlo estimate of the panel log-likelihood. Specifically, we perform $N_{\text{rep}}$ independent particle filter runs, each with $J$ particles, yielding unit-level log-likelihood vectors $\{\ell_u^{(r)}\}_{r=1}^{N_{\text{rep}}}$ for each unit $u$. The `panel_logmeanexp` function aggregates these replicates to produce a Monte Carlo estimate of $\log L(\hat{\phi}^{(M)})$ along with its standard error, accounting for the stochastic nature of the particle filter via the log-mean-exponential transformation that reduces bias in likelihood estimation.
+
+The collection of terminal estimates from all parallel searches is examined to identify the run achieving the highest likelihood. The corresponding parameter vector $\hat{\phi}_{\text{MLE}}$ represents our maximum likelihood estimate, while the associated Monte Carlo standard error quantifies the uncertainty in the likelihood evaluation itself (distinct from parameter uncertainty, which is assessed via profile likelihood in subsequent sections).
+
+Case 2: Initial Search --- situation with unit-specific parameters
+
+While the all-shared specification imposes parsimony by pooling all parameters across experimental units, biological replicates may exhibit genuine heterogeneity in specific mechanisms. A mixed parameterization allows a subset of parameters to vary by unit while maintaining shared values for the remaining parameters. This approach balances flexibility—accommodating systematic between-unit differences—with statistical efficiency by avoiding unnecessary parameterization of rates that show no evidence of heterogeneity.
+
+We illustrate this approach by making the adult mortality rate `theta_Sn` unit-specific while keeping all other parameters shared. This configuration reflects a scenario where background mortality varies across mesocosms due to unmeasured environmental factors, while rates governing reproduction, feeding, and other processes remain constant.
+
+The implementation requires constructing a parameter specification compatible with `panelPomp`'s mixed parameterization interface. Helper functions facilitate this construction:
+
+```{r}
+#| cache: true
+create_parameters = function(parameter_names, parameters) {
+shared_parameter = parameters[!(names(parameters) %in% parameter_names)]
+
+specific_values = lapply(parameter_names, function(p) rep(parameters[[p]], 10))
+specific_mat_data = unlist(specific_values)
+
+specific_mat = matrix(
+  data = specific_mat_data,
+  nrow = length(parameter_names),
+  ncol = 10,
+  byrow = TRUE,
+  dimnames = list(
+    parameter_names,
+    c("u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8","u9","u10")
+  )
+  )
+  
+return(list(shared_parameter = shared_parameter, specific_mat = specific_mat))
+}
+
+
+create_specific_name = function(parameter_names) {
+  specific_name = paste0("specific_", paste(parameter_names, collapse = "_"))
+  return(specific_name)
+}
+
+specific_names = c('theta_Sn')
+
+result = create_parameters(specific_names, parameters)
+
+shared_parameter = result$shared_parameter
+specific_mat = result$specific_mat
+
+panelfood = panelPomp(pomplist, shared=shared_parameter,specific = specific_mat)
+
+set.seed(20260723)
+parameter_candidates = replicate(
+  n_searches,
+  {
+    shared_candidate = shared_parameter
+    shared_positive = shared_candidate > 0
+    shared_candidate[shared_positive] = exp(
+      runif(
+        sum(shared_positive),
+        log(shared_parameter[shared_positive] / 3),
+        log(shared_parameter[shared_positive] * 3)
+      )
+    )
+
+    specific_candidate = specific_mat
+    specific_positive = specific_candidate > 0
+    specific_candidate[specific_positive] = exp(
+      runif(
+        sum(specific_positive),
+        log(specific_mat[specific_positive] / 3),
+        log(specific_mat[specific_positive] * 3)
+      )
+    )
+
+    list(shared = shared_candidate, specific = specific_candidate)
+  },
+  simplify = FALSE
+)
+U = length(panelfood)
+{
+foreach(
+i = seq_len(n_searches),
+.packages = c("pomp", "panelPomp"),
+.inorder = FALSE,
+.options.multicore = list(set.seed = TRUE)
+) %dopar%
+{
+  guessed.parameter.values = parameter_candidates[[i]]
+  mif2(
+    panelfood,
+    Nmif = algorithmic.params$Nmif[run_level],
+    block = TRUE,
+    shared.start = guessed.parameter.values$shared,
+    specific.start = guessed.parameter.values$specific,
+    rw.sd = rw_sd(
+      sigF=dent_rw.sd,
+      theta_Sn=dent_rw.sd,
+      k_Sn = dent_rw.sd,
+      f_Sn=dent_rw.sd,
+      rn=dent_rw.sd,
+      sigJn = dent_rw.sd,
+      theta_Jn = dent_rw.sd),
+    cooling.type = "geometric",
+    cooling.fraction.50 = 0.7,
+    Np = algorithmic.params$Mp[run_level]
+  ) -> m1
+  
+  ll = replicate(n = algorithmic.params$Np_rep[run_level],
+                  unitLogLik(pfilter(m1,
+                                     Np = algorithmic.params$Np[run_level])))
+  list(mif = m1,
+       ll = panel_logmeanexp(x = ll,
+                             MARGIN = 1,
+                             se = TRUE))
+}
+} -> mf
+
+lls = matrix(unlist(sapply(mf, getElement, "ll")), nrow = 2)
+best = which.max(lls[1,])
+mif.estimate = coef(mf[[best]]$mif)
+pf.loglik.of.mif.estimate = unname(mf[[best]]$ll[1])
+s.e.of.pf.loglik.of.mif.estimate = unname(mf[[best]]$ll[2])
+```
+
+The unit-specific parameterization departs from the all-shared specification by partitioning the parameter vector into two components: a shared component containing parameters that are identical across all units, and a unit-specific component containing parameters that vary by replicate. This mixed structure is implemented through a matrix representation where rows correspond to unit-specific parameters and columns correspond to experimental units (u1, ..., u10), with each matrix entry holding the starting value for that parameter-unit combination. This row-by-column orientation is required by the `panelPomp` and `mif2` interface for the `specific` and `specific.start` arguments.
+
+The panel object is instantiated by passing both the shared parameter vector and the unit-specific matrix to `panelPomp(pomplist, shared = ..., specific = ...)`. Because this model contains unit-specific parameters, `block = TRUE` selects marginalized panel iterated filtering (MPIF), which changes the resampling treatment of unit-specific parameter particles across panel units [@wheeler25]. The argument name `block` is retained by the `panelPomp` interface but should not be confused with temporal or spatial block particle filters. During optimization, the algorithm applies geometric cooling to perturbations of both parameter types: shared parameters receive uniform perturbations across all units, while unit-specific parameters receive independent perturbations for each unit. Replicated particle filter evaluations at the terminal parameter values yield log-likelihood estimates with associated Monte Carlo standard errors, enabling ranking of parallel runs and assessment of convergence stability.
+
+The primary advantage of allowing unit-specific parameters is flexibility in representing genuine between-replicate heterogeneity. By permitting each unit to have its own value of `theta_Sn`, the model can capture systematic differences in adult mortality rates across mesocosms without attributing these differences to stochastic variation. This increased flexibility typically results in higher maximized log-likelihood and can reduce structured patterns in residuals, particularly when true parameter heterogeneity exists but has been incorrectly constrained to be uniform.
+
+Replacing one shared parameter with U unit-specific values adds U − 1 free parameters. Thus, in a 10-unit panel, making one formerly shared parameter unit-specific increases the total parameter count by 9. This expansion elevates estimation variance due to the curse of dimensionality, slows MIF convergence as the algorithm must explore a higher-dimensional parameter space, and heightens overfitting risk when the number of observations per unit is limited relative to the number of parameters. Consequently, unit-specific models should not be adopted automatically based solely on modest likelihood improvements. Rather, they must be rigorously compared against the all-shared baseline using information criteria such as AIC, which explicitly penalizes model complexity. Improvements must be corroborated by stable convergence diagnostics and biologically interpretable parameter estimates, not merely marginal and potentially spurious gains in likelihood that fall within Monte Carlo error bounds.
+
+Unit-specific parameters are scientifically justified when there is clear empirical or theoretical evidence for between-replicate variation in specific mechanisms. Such evidence might include documented microenvironmental differences across experimental units (e.g., uncontrolled temperature gradients or light exposure), known protocol deviations that affect particular rates (e.g., slightly different initial densities or inoculation timing), or persistent unit-stratified patterns in residuals under the all-shared fit that suggest systematic rather than stochastic heterogeneity. In the absence of such evidence, introducing unit-specific parameters amounts to overfitting idiosyncratic noise rather than capturing genuine biological variation.
+
+A standard workflow can begin with the parsimonious all-shared model, which serves both as a baseline for comparison and as a diagnostic tool for identifying which parameters, if any, merit unit-specific treatment. Residual analysis, simulation-based diagnostics, and unit-level log-likelihood contributions can reveal whether systematic discrepancies between model predictions and data are concentrated in particular units or associated with specific state variables. When such patterns emerge, the next step is to introduce unit-specific parameterization incrementally, adding only the smallest plausible set of parameters (ideally one at a time) that addresses the identified deficiency. After re-estimation with adequate particle counts and sufficient MIF iterations, the expanded model should be retained only if the likelihood gain substantially exceeds the AIC penalty, convergence traces remain stable, and the estimated between-unit variation is biologically plausible and scientifically interpretable.
+
+If the unit-specific model yields only marginal AIC improvements (e.g., $\Delta \text{AIC} \approx 0$), exhibits unstable convergence traces with high run-to-run variability, or produces implausibly large estimated differences between units, the all-shared specification should be preferred on grounds of parsimony and robustness. As an alternative to fully unconstrained unit-specific effects, consider regression-based parameterizations when unit-level covariates are available. For example, if initial densities or environmental measurements differ across units, modeling parameters as linear or nonlinear functions of these covariates can capture systematic heterogeneity more parsimoniously than allocating separate parameters to each unit, while simultaneously providing scientific insight into which observable factors drive parameter variation.
+
+#### Diagnostic 1: Parameter Scaling Verification
+
+To empirically demonstrate the numerical pathologies induced by parameter mis-specification, we compare particle filter performance between the correctly scaled `panelfood` object and the deliberately corrupted `panelfood_wrong` object. This diagnostic quantifies the degradation in filtering stability and likelihood evaluation that results from improper parameter scaling.
+
+We evaluate both parameter configurations using replicated particle filtering to quantify Monte Carlo variability and assess numerical stability:
+
+```{r}
+#| label: srjf-scaling-diagnostic
+#| cache: true
+#| warning: false
+
+# Replicated filtering with correctly scaled parameters
+set.seed(801)
+pf_correct_reps = replicate(
+  n = algorithmic.params$Np_rep[run_level],
+  {
+    pf = pfilter(panelfood, Np = algorithmic.params$Np[run_level])
+    list(
+      loglik = logLik(pf),
+      unit_logliks = unitLogLik(pf)
+    )
+  },
+  simplify = FALSE
+)
+
+shared_parameter = c(
+  rn       = 1.535539e+03,  
+  f_Sn     = 1.306857e-04,  
+  theta_Sn = 6.353239e-01,  
+  theta_Jn = 1.376217e-03,  
+  sigSn    = 0.000000e+00,  
+  sigJn    = 3.018772e-01,  
+  sigF     = 8.658726e-07,  
+  k_Sn     = 1.417860e+01   
+)
+
+# Replicated filtering with mis-scaled parameters
+set.seed(801)
+pf_wrong_reps = replicate(
+  n = algorithmic.params$Np_rep[run_level],
+  {
+    pf = pfilter(panelfood_wrong, Np = algorithmic.params$Np[run_level])
+    list(
+      loglik = logLik(pf),
+      unit_logliks = unitLogLik(pf)
+    )
+  },
+  simplify = FALSE
+)
+
+# Extract panel log-likelihoods
+ll_correct_vec = sapply(pf_correct_reps, function(x) x$loglik)
+ll_wrong_vec = sapply(pf_wrong_reps, function(x) x$loglik)
+
+# Extract unit-level contributions
+unit_ll_correct = sapply(pf_correct_reps, function(x) x$unit_logliks)
+unit_ll_wrong = sapply(pf_wrong_reps, function(x) x$unit_logliks)
+
+# Compute summary statistics
+cat(sprintf(
+"Correctly Scaled Parameters:
+  Panel log-likelihood: %.2f (SE: %.2f)
+  Range across replicates: [%.2f, %.2f]
+  Unit-level range: [%.2f, %.2f]
+
+Mis-Scaled Parameters:
+  Panel log-likelihood: %.2f (SE: %.2f)
+  Range across replicates: [%.2f, %.2f]
+  Contains -Inf: %s
+
+Log-likelihood difference: %.2f
+",
+  mean(ll_correct_vec), sd(ll_correct_vec) / sqrt(length(ll_correct_vec)),
+  min(ll_correct_vec), max(ll_correct_vec),
+  min(rowMeans(unit_ll_correct)), max(rowMeans(unit_ll_correct)),
+  mean(ll_wrong_vec), sd(ll_wrong_vec) / sqrt(length(ll_wrong_vec)),
+  min(ll_wrong_vec), max(ll_wrong_vec), any(is.infinite(ll_wrong_vec)),
+  mean(ll_correct_vec) - mean(ll_wrong_vec)
+))
+```
+
+The correctly scaled parameters yield a finite panel log-likelihood with small Monte Carlo standard error, indicating stable particle filter performance. The replicated evaluations produce consistent estimates, with variation attributable solely to Monte Carlo sampling. In contrast, mis-scaled parameters generate severely degraded likelihood values, potentially including $-\infty$ when particles universally violate boundary constraints. The Monte Carlo standard error for mis-scaled parameters substantially exceeds that of correctly scaled parameters, reflecting particle filter instability: different random number seeds produce qualitatively different likelihood estimates, indicating that the particle approximation has broken down.
+
+@fig-srjf-scaling-unit-comparison compares the distribution of unit-level log-likelihood contributions under correctly scaled and mis-scaled parameters:
+
+```{r}
+#| label: fig-srjf-scaling-unit-comparison
+#| cache: true
+#| fig-width: 10
+#| fig-height: 4
+#| fig-cap: "Unit-level log-likelihood contributions under correctly scaled (left) and mis-scaled (right) parameters. The flat mis-scaled panel reflects the fixed -150 log-likelihood penalty applied after constraint violations; it should not be interpreted as equal fit across units. Red dashed lines show the mean finite contribution."
+
+par(mfrow = c(1, 2))
+
+unit_labels <- paste0("u", 1:10)
+
+unit_means_correct <- rowMeans(unit_ll_correct)
+
+plot(
+  seq_along(unit_means_correct),
+  unit_means_correct,
+  type = "o",
+  pch = 16,
+  xaxt = "n",
+  xlab = "Unit",
+  ylab = "Unit log-likelihood",
+  main = "Correctly Scaled Parameters"
+)
+
+axis(
+  side = 1,
+  at = seq_along(unit_means_correct),
+  labels = unit_labels
+)
+
+abline(h = mean(unit_means_correct), col = "red", lty = 2, lwd = 2)
+
+unit_means_wrong <- rowMeans(unit_ll_wrong)
+finite_wrong <- unit_means_wrong[is.finite(unit_means_wrong)]
+wrong_plot <- unit_means_wrong
+nonfinite_wrong <- !is.finite(wrong_plot)
+plot_floor <- if (length(finite_wrong) > 0) {
+  min(finite_wrong) - max(1, 0.05 * diff(range(finite_wrong)))
+} else {
+  -150 * 10
+}
+wrong_plot[nonfinite_wrong] <- plot_floor
+
+plot(
+  seq_along(wrong_plot),
+  wrong_plot,
+  type = "o",
+  pch = 16,
+  xaxt = "n",
+  xlab = "Unit",
+  ylab = "Unit log-likelihood",
+  main = "Mis-Scaled Parameters"
+)
+
+axis(
+  side = 1,
+  at = seq_along(wrong_plot),
+  labels = unit_labels
+)
+
+if (length(finite_wrong) > 0) {
+  abline(h = mean(finite_wrong), col = "red", lty = 2, lwd = 2)
+}
+if (any(nonfinite_wrong)) {
+  text(
+    which(nonfinite_wrong),
+    wrong_plot[nonfinite_wrong],
+    labels = "-Inf",
+    pos = 3,
+    cex = 0.8
+  )
+}
+```
+
+Under correctly scaled parameters, unit-level log-likelihoods show moderate variation reflecting differences among observed trajectories. Under the mis-scaled parameters, the unit contributions collapse toward a common likelihood floor because the measurement model assigns a fixed log-likelihood penalty of $-150$ whenever `error_count > 0`. The absence of between-unit variation is therefore evidence of repeated constraint violations, not evidence that the units are fitted equally well.
+
+#### Diagnostic 2: Evidence for Unit-Specific Parameterization
+
+To assess whether unit-specific parameterization of adult mortality $\theta^n_{S,u}$ is statistically justified, we employ a systematic workflow: (i) examine unit-level log-likelihood contributions under the all-shared model, (ii) estimate the unit-specific model and compare AIC values, and (iii) assess whether estimated unit-specific parameters exhibit interpretable patterns.
+
+@fig-srjf-unit-likelihood-decomposition shows whether substantial heterogeneity in unit-level log-likelihoods under the all-shared model indicates that a single parameter vector inadequately describes all units:
+
+```{r}
+#| label: fig-srjf-unit-likelihood-decomposition
+#| cache: true
+#| fig-width: 8
+#| fig-height: 4
+#| fig-cap: "Unit-level log-likelihood contributions under all-shared parameterization. Error bars show Monte Carlo standard errors. Systematic variation beyond Monte Carlo error suggests potential unit-specific heterogeneity."
+
+unit_ll_means = rowMeans(unit_ll_correct)
+unit_ll_ses = apply(unit_ll_correct, 1, sd) / 
+                sqrt(algorithmic.params$Np_rep[run_level])
+
+
+unit_ll_df = data.frame(
+  Unit = 1:10,
+  LogLik = unit_ll_means,
+  SE = unit_ll_ses,
+  Lower = unit_ll_means - 2 * unit_ll_ses,
+  Upper = unit_ll_means + 2 * unit_ll_ses
+)
+
+unit_ll_df$Normalized = unit_ll_df$LogLik - mean(unit_ll_df$LogLik)
+
+plot(unit_ll_df$Unit, unit_ll_df$Normalized,
+     pch = 19, col = "blue",
+     xlab = "Unit", ylab = "Normalized log-likelihood",
+     main = "Unit-Level Likelihood Contributions",
+     ylim = range(c(unit_ll_df$Lower - mean(unit_ll_means),
+                    unit_ll_df$Upper - mean(unit_ll_means))))
+segments(unit_ll_df$Unit, 
+         unit_ll_df$Lower - mean(unit_ll_means),
+         unit_ll_df$Unit, 
+         unit_ll_df$Upper - mean(unit_ll_means),
+         col = "blue")
+abline(h = 0, lty = 2, col = "gray")
+```
+
+Units with normalized log-likelihoods deviating substantially from zero (beyond $\pm 2$ Monte Carlo standard errors) are systematically poorly fit by the shared parameterization. If multiple units exhibit such deviations and the range of unit-level log-likelihoods substantially exceeds Monte Carlo uncertainty (e.g., range $> 10$ log-likelihood units when mean SE $< 1$), this constitutes preliminary evidence for parameter heterogeneity. However, stochastic dynamics alone can generate between-unit variation, so AIC-based model comparison is required for definitive assessment.
+
+We compare the all-shared model against a unit-specific parameterization of $\theta^n_S$:
+
+```{r}
+#| label: srjf-aic-comparison
+#| cache: true
+
+# All-shared model AIC
+p_shared = length(shared_parameter)
+aic_shared = 2 * p_shared - 2 * pf.loglik.of.mif.estimate
+
+
+create_parameters = function(parameter_names, parameters) {
+  shared_parameter = parameters[!(names(parameters) %in% parameter_names)]
+  
+  specific_values = lapply(parameter_names, function(p) rep(parameters[[p]], 10))
+  specific_mat_data = unlist(specific_values)
+  
+  specific_mat = matrix(
+    data = specific_mat_data,
+    nrow = length(parameter_names),
+    ncol = 10,
+    byrow = TRUE,
+    dimnames = list(
+      parameter_names,
+      c("u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8","u9","u10")
+    )
+  )
+  
+  return(list(shared_parameter = shared_parameter, specific_mat = specific_mat))
+}
+
+
+create_specific_name = function(parameter_names) {
+  specific_name = paste0("specific_", paste(parameter_names, collapse = "_"))
+  return(specific_name)
+}
+
+
+specific_names = c('theta_Sn')
+result = create_parameters(specific_names, shared_parameter)
+
+panelfood_specific = panelPomp(
+  pomplist, 
+  shared = result$shared_parameter,
+  specific = result$specific_mat
+)
+
+# Prepare parameter candidates for unit-specific model
+parameter_candidates_specific = list(
+  shared = result$shared_parameter,
+  specific = result$specific_mat
+)
+
+# Perform MIF search with unit-specific theta_Sn
+{
+  foreach(
+    i = 1:(2 * getDoParWorkers()),
+    .packages = c("pomp", "panelPomp"),
+    .inorder = FALSE,
+    .options.multicore = list(set.seed = TRUE)
+  ) %dopar% {
+    
+    mif2(
+      panelfood_specific,
+      Nmif = algorithmic.params$Nmif[run_level],
+      shared.start = parameter_candidates_specific$shared,
+      specific.start = parameter_candidates_specific$specific,
+      rw.sd = rw_sd(
+        rn = dent_rw.sd, 
+        f_Sn = dent_rw.sd,
+        theta_Sn = dent_rw.sd,  # Now unit-specific
+        theta_Jn = dent_rw.sd,
+        sigJn = dent_rw.sd, 
+        sigF = dent_rw.sd, 
+        k_Sn = dent_rw.sd
+      ),
+      cooling.type = "geometric",
+      cooling.fraction.50 = 0.7,
+      Np = algorithmic.params$Mp[run_level]
+    ) -> m_specific
+    
+    ll = replicate(
+      n = algorithmic.params$Np_rep[run_level],
+      unitLogLik(pfilter(m_specific, 
+                         Np = algorithmic.params$Np[run_level]))
+    )
+    
+    list(
+      mif = m_specific,
+      ll = panel_logmeanexp(x = ll, MARGIN = 1, se = TRUE)
+    )
+  }
+} -> mf_specific
+
+# Extract best unit-specific estimate
+lls_specific = matrix(unlist(sapply(mf_specific, getElement, "ll")), nrow = 2)
+best_specific = which.max(lls_specific[1, ])
+
+ll_specific = unname(lls_specific[1, best_specific])
+se_specific = unname(lls_specific[2, best_specific])
+
+# Extract estimated unit-specific theta_Sn values
+coef_specific = coef(mf_specific[[best_specific]]$mif)
+theta_Sn_estimates = coef_specific[grep("^theta_Sn\\[u", names(coef_specific))]
+
+# Compute AIC for unit-specific model
+p_specific = length(result$shared_parameter) + nrow(result$specific_mat) * ncol(result$specific_mat)
+aic_specific = 2 * p_specific - 2 * ll_specific
+
+
+cat("Model Comparison:\n")
+cat(sprintf("  Delta AIC: %.2f\n", aic_specific - aic_shared))
+cat(sprintf("  Likelihood improvement: %.2f\n", 
+            ll_specific - pf.loglik.of.mif.estimate))
+cat(sprintf("  Improvement in SE units: %.2f\n",
+            (ll_specific - pf.loglik.of.mif.estimate) / 
+              sqrt(se_specific^2 + s.e.of.pf.loglik.of.mif.estimate^2)))
+
+
+```
+
+A negative $\Delta \text{AIC}$ of substantial magnitude indicates that the likelihood improvement outweighs the penalty for additional parameters, providing evidence that between-unit heterogeneity is genuine rather than artifactual. Conversely, when $\Delta \text{AIC}$ is positive or only marginally negative, the parsimony principle favors the all-shared specification: the additional parameters fail to sufficiently improve model fit relative to their cost in degrees of freedom, suggesting that stochastic dynamics adequately explain observed between-unit variation without invoking systematic parameter differences.
+
+The decision between shared and unit-specific parameterization must integrate multiple lines of evidence beyond AIC alone. The coefficient of variation in estimated unit-specific parameter values provides a complementary diagnostic for genuine heterogeneity. If estimated values cluster tightly around their mean, this suggests that the unit-specific model is recovering essentially identical values for all units, indicating minimal true heterogeneity and unnecessary parameterization. Conversely, if estimated values span multiple orders of magnitude without interpretable patterns correlating to documented experimental conditions, this indicates that the model is fitting idiosyncratic noise rather than capturing systematic biological variation. Genuine parameter heterogeneity should manifest as moderate between-unit variation that aligns with known differences in experimental conditions, unit characteristics, or environmental covariates.
+
+The all-shared specification should be preferred unless multiple diagnostic criteria concur in supporting unit-specific parameterization. This conclusion aligns with the general principle that PanelPOMP models should employ unit-specific parameters only when three conditions are jointly satisfied: first, information criteria provide strong statistical evidence favoring increased complexity; second, estimated unit-specific values exhibit biologically interpretable patterns that correlate with measured unit-level covariates or known experimental heterogeneities; and third, residual diagnostics under the all-shared model reveal systematic rather than stochastic discrepancies concentrated in particular units or associated with specific state variables. Absent these converging lines of evidence, the all-shared model should be preferred on grounds of parsimony, statistical efficiency, biological interpretability, and robustness against overfitting. When unit-level covariates are available, regression-based parameterizations offer an intermediate approach that captures systematic heterogeneity more parsimoniously than fully unconstrained unit-specific effects, while simultaneously providing scientific insight into which observable factors drive parameter variation.
+
+#### Diagnostic 3: MIF searches visualization
+
+Each MIF run produces a trace—a sequence of log-likelihood values computed at intermediate parameter values along the optimization trajectory. Examining these traces across all parallel runs provides insight into convergence behavior, algorithmic performance, and Monte Carlo stability.
+
+@fig-srjf-mif-convergence aggregates traces from all MIF searches and visualizes their progression:
+
+```{r}
+#| label: fig-srjf-mif-convergence
+#| fig-cap: "MIF log-likelihood traces across independent searches. Colors distinguish searches; convergence is assessed from stabilization and agreement of the individual traces."
+#| warning: false
+#| cache: true
+mifLikes = as.data.frame(traces(mf[[best]]$mif))
+mifLikes$iter = as.numeric(rownames(mifLikes))
+mifLikes$mif = 1
+
+final_likes = numeric(length(mf))
+final_likes[1] = mf[[1]]$ll[1]
+
+for (i in 2:length(mf)) {
+  tmp_df = as.data.frame(traces(mf[[i]]$mif))
+  tmp_df$iter = as.numeric(rownames(tmp_df))
+  tmp_df$mif = i
+  mifLikes = dplyr::bind_rows(mifLikes, tmp_df)
+  final_likes[i] = mf[[i]]$ll[1]
+}
+
+# Clean data
+mifLikes = mifLikes[mifLikes$loglik != (-Inf) & !is.na(mifLikes$loglik), ]
+
+# Improved plot
+ggplot(mifLikes, aes(x = iter, y = loglik)) +
+  geom_point(aes(color = as.factor(mif)), 
+             alpha = 0.6, 
+             size = 1.5) +
+  scale_color_viridis_d(option = "turbo") +
+  theme_minimal() +
+  theme(
+    legend.position = 'none',
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(size = 12, face = "bold"),
+    axis.text = element_text(size = 10),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.margin = margin(10, 10, 10, 10)
+  ) +
+  labs(
+    x = "Iteration",
+    y = "Log-likelihood",
+    title = "MIF Convergence Traces"
+  )
+```
+
+MIF optimization exhibits three characteristic phases. Initially, large perturbations induce high variance as the algorithm explores the parameter space broadly. This is followed by steady ascent as the parameter swarm locates high-likelihood regions and begins concentrating around promising values. Finally, as the cooling schedule progressively reduces perturbation magnitudes, traces stabilize and plateau near a maximum. Successful convergence is indicated when traces from multiple independent runs plateau at similar final log-likelihood values. In contrast, persistent drift or monotonic decline suggests algorithmic deficiencies: the random walk standard deviation may be too small (under-exploration), the cooling schedule too aggressive (over-quenching), or particle counts inadequate to maintain effective filtering.
+
+Trace patterns also provide guidance for algorithmic tuning. Erratic or highly volatile trajectories typically indicate particle degeneracy or insufficient filtering resources, most commonly arising when `Mp` is too small relative to the model's state-space dimension and measurement error structure. Remedies include increasing particle counts, modestly enlarging `rw.sd` to improve exploration without destabilizing the filter, or slowing the cooling schedule (e.g., adjusting `cooling.fraction.50` from 0.7 to 0.8). Sudden drops in log-likelihood are particularly concerning, as they may signal numerical instabilities stemming from poor parameter scaling or boundary violations. Such patterns warrant careful examination of initial parameter values and verification that parameter transformations correctly enforce biological constraints.
+
+Independent searches initialized from dispersed starting values should converge toward similar high terminal log-likelihoods when the optimization is robust. Persistent differences among searches may indicate local modes, weak identification, or insufficient computational effort, whereas differences among replicate evaluations at a given parameter vector reflect Monte Carlo variability.
+
+The trace plot thus serves as a primary diagnostic for MIF performance, synthesizing information about convergence, stability, and consistency into a single visualization. Stable, monotonically increasing traces with low run-to-run variance indicate that the algorithm is effectively navigating the likelihood surface and that Monte Carlo variability remains sufficiently controlled for reliable inference. Conversely, problematic patterns—including flat traces, high volatility, abrupt discontinuities, or substantial discrepancies between runs—signal the need for algorithmic adjustments before proceeding to formal parameter estimation or model comparison.
+
+#### Diagnostic 4: Monte Carlo Adjusted Profile
+
+Monte Carlo Adjusted Profile (MCAP) methods provide confidence intervals for situations where the likelihood is evaluated and maximized by Monte Carlo algorithms. A smoothed estimate of the profile likelihood is used to reduce Monte Carlo error, quantify this error, and adjust the confidence intervals accordingly to maintain their coverage.
+
+MCAP is particularly useful for high-dimensional situations, such as arise in panel data analysis, since it becomes practically impossible to apply sufficient computational effort to make Monte Carlo error negligible. MCAP has previously been demonstrated for panel iterated filtering.
+
+The following code demonstrates an example about running MCAP analysis on parameter $\theta_{S_n}$.
+
+```{r}
+#| label: fig-mcap-theta-sn
+#| fig-cap: "MCAP profile for the adult mortality rate theta_Sn on the log scale. Points are Monte Carlo profile evaluations; the red curve is the smoothed profile, dashed vertical lines are the adjusted 95% confidence limits, and vertical solid lines mark the MCAP and MIF point estimates."
+#| cache: true
+DEBUG = TRUE
+name_str = 'theta_Sn'
+shared_parameter = c(
+  sigF      = 1.116997e-05,
+  sigSn     = 0,
+  f_Sn      = 3.116171e-04,
+  rn        = 3.369070e+02,
+  k_Sn      = 6.257932e+01,
+  sigJn     = 3.073612e-01,
+  theta_Sn  = 2.436524e-01,
+  theta_Jn  = 3.093602e-03
+)
+
+panelfood = panelPomp(pomplist, shared=shared_parameter)
+
+generate_parameter_profile = function(prof_name, nprof = 80) {
+  shared_ub = shared_parameter * 10
+  
+  shared_lb = shared_ub / 100
+  
+  ub_unit = log(shared_ub[prof_name])
+  lb_unit = log(shared_lb[prof_name])
+  
+  shared_lb = shared_lb[ !(names(shared_lb) %in% c("sigSn",prof_name)) ]
+  shared_ub = shared_ub[ !(names(shared_ub) %in% c("sigSn",prof_name)) ]
+  
+  parameter_shared = pomp::profile_design(
+    temp = seq(lb_unit, ub_unit, length.out = nprof),
+    lower = log(shared_lb),
+    upper = log(shared_ub),
+    type = 'runif',
+    nprof = nprof
+  )
+  
+  parameter_shared = parameter_shared %>% 
+    rename( !!prof_name := temp)  
+  
+  parameter_shared = exp(parameter_shared)
+  parameter_shared$sigSn = 0
+  return(parameter_shared)
+}
+
+generate_sd = function(x = 0.05, profile_name){
+  sd_list = c(
+    sigF      = x,
+    sigSn     = 0,
+    f_Sn      = x,
+    rn        = x,
+    k_Sn      = x,
+    sigJn     = x,
+    theta_Sn  = x,
+    theta_Jn  = x
+  )
+  
+  sd_list[profile_name] = 0
+  return(sd_list)
+}
+
+parameter_shared = generate_parameter_profile(name_str,nprof = 20)
+
+dent_rw_sd_first = generate_sd(x = 0.05,profile_name = name_str)
+
+U = length(panelfood)
+{
+foreach(
+i = 1:nrow(parameter_shared),
+.packages = c("pomp", "panelPomp"),
+.inorder = FALSE,
+.options.multicore = list(set.seed = TRUE)
+) %dopar%
+{
+  guessed.parameter.values = as.numeric(parameter_shared[i,])
+  names(guessed.parameter.values) = colnames(parameter_shared)
+  mif2(
+    panelfood,
+    Nmif = algorithmic.params$Nmif[run_level],
+    shared.start = guessed.parameter.values,
+    rw.sd = rw_sd(
+      sigSn=dent_rw_sd_first['sigSn'],
+      sigF=dent_rw_sd_first['sigF'],
+      theta_Sn=dent_rw_sd_first['theta_Sn'],
+      k_Sn = dent_rw_sd_first['k_Sn'],
+      f_Sn=dent_rw_sd_first['f_Sn'],
+      rn=dent_rw_sd_first['rn'],
+      sigJn = dent_rw_sd_first['sigJn'],
+      theta_Jn = dent_rw_sd_first['theta_Jn']),
+    cooling.type = "geometric",
+    cooling.fraction.50 = 0.7,
+    Np = algorithmic.params$Mp[run_level]
+    
+  ) -> m1
+  
+  ll = replicate(n = algorithmic.params$Np_rep[run_level],
+                  unitLogLik(pfilter(m1,
+                                     Np = algorithmic.params$Np[run_level])))
+  
+  if(DEBUG){      
+    list(mif = m1,
+         ll = panel_logmeanexp(x = ll,
+                               MARGIN = 1,
+                               se = TRUE))
+  }else{
+    list(mif_ceof = coef(m1),
+         ll = panel_logmeanexp(x = ll,
+                               MARGIN = 1,
+                               se = TRUE))
+  }
+}
+} -> mf
+
+
+lls = matrix(unlist(sapply(mf, getElement, "ll")), nrow = 2)
+best = which.max(lls[1,])
+mif.estimate = coef(mf[[best]]$mif)
+pf.loglik.of.mif.estimate = unname(mf[[best]]$ll[1])
+s.e.of.pf.loglik.of.mif.estimate = unname(mf[[best]]$ll[2])
+
+trace = as.data.frame(traces(mf[[1]]$mif))
+trace$iter = as.numeric(rownames(trace))
+
+for (i in 2 : length(mf)){
+  tmp_df = as.data.frame(traces(mf[[i]]$mif))
+  tmp_df$iter = as.numeric(rownames(tmp_df))
+  trace = dplyr::bind_rows(trace,tmp_df)
+}
+
+final_likes = numeric(length(mf))
+
+for (i in 1: length(mf)){
+  final_likes[i] = mf[[i]]$ll[1]
+}
+
+final_params = trace %>%
+  dplyr::filter(iter == max(iter, na.rm = TRUE))
+
+final_params$loglik = final_likes
+
+subset_data_theta_Sn = final_params %>%
+  group_by(theta_Sn) %>%
+  filter(loglik == max(loglik))
+
+subset_data_theta_Sn$log_theta_Sn = log(subset_data_theta_Sn$theta_Sn)
+
+mcap(subset_data_theta_Sn$loglik, subset_data_theta_Sn$log_theta_Sn,  
+     level = 0.95, span = 0.6, Ngrid = 1000) -> mcap_object_theta_Sn
+mcap_object_theta_Sn$mle -> theta_Sn_mle
+theta_Sn_p = ggplot() +
+  geom_point(data = subset_data_theta_Sn, aes(x = log_theta_Sn, y = loglik)) +
+  geom_line(data = mcap_object_theta_Sn$fit, aes(x = parameter, y = smoothed), col = 'red') +
+  geom_vline(xintercept = mcap_object_theta_Sn$ci[1], linetype = 'dashed') +
+  geom_vline(xintercept = mcap_object_theta_Sn$ci[2], linetype = 'dashed') +
+  geom_vline(xintercept = mcap_object_theta_Sn$mle, col = 'blue') +
+  geom_vline(xintercept = log(mif.estimate[['theta_Sn']]), col = 'red') +
+  geom_hline(yintercept = pf.loglik.of.mif.estimate, col = 'red',linetype = "longdash") +
+  geom_point(aes(x = log(mif.estimate[['theta_Sn']]), 
+                 y = pf.loglik.of.mif.estimate), 
+             color = "red", size = 2) + 
+  labs(x =  TeX("$\\log(\\theta^n_{S})$"), y = "log likelihood") +
+  theme(axis.text = element_text(size = 11),
+        axis.title = element_text(size = 11)) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+theta_Sn_p
+
+```
+
+In @fig-mcap-theta-sn, the red curve represents the smoothed profile log-likelihood for $\theta_{S_n}$, obtained by applying a local polynomial smoother to reduce Monte Carlo variability while preserving the underlying shape of the likelihood surface. The vertical dashed lines demarcate the Monte Carlo-adjusted 95% confidence interval on the log scale; exponentiating these bounds yields the confidence interval for $\theta_{S_n}$ on its natural scale. The red point indicates the log-likelihood evaluated at the MIF point estimate $\hat{\theta}_{S_n}^{\text{MIF}}$, with the corresponding horizontal dashed line showing its log-likelihood value. The close proximity of this point to the blue vertical line marking the MCAP maximum likelihood estimate indicates successful convergence of the optimization algorithm. This agreement suggests that Monte Carlo adjustment primarily refines uncertainty quantification through smoothing rather than substantially revising the point estimate itself.
+
+However, MCAP analysis does not uniformly yield well-defined confidence intervals across all parameters. The success of profile likelihood methods depends critically on both the strength of information in the data and the stability of Monte Carlo likelihood estimates across the parameter range. To illustrate this variability in inferential precision, we examine the profile for the juvenile mortality rate $\theta_{J_n}$.
+
+```{r}
+#| label: fig-mcap-theta-jn
+#| fig-cap: "MCAP profile for the juvenile mortality rate theta_Jn on the log scale. The nearly flat profile indicates weak identification over the explored range."
+#| cache: true
+name_str = 'theta_Jn'
+shared_parameter = c(
+  sigF      = 1.116997e-05,
+  sigSn     = 0,
+  f_Sn      = 3.116171e-04,
+  rn        = 3.369070e+02,
+  k_Sn      = 6.257932e+01,
+  sigJn     = 3.073612e-01,
+  theta_Sn  = 2.436524e-01,
+  theta_Jn  = 3.093602e-03
+)
+
+panelfood = panelPomp(pomplist, shared=shared_parameter)
+parameter_shared = generate_parameter_profile(name_str, 50)
+
+dent_rw_sd_first = generate_sd(x = 0.05,profile_name = name_str)
+
+U = length(panelfood)
+{
+foreach(
+  i = 1:nrow(parameter_shared),
+  .packages = c("pomp", "panelPomp"),
+  .inorder = FALSE,
+  .options.multicore = list(set.seed = TRUE)
+) %dopar%
+  {
+    guessed.parameter.values = as.numeric(parameter_shared[i,])
+    names(guessed.parameter.values) = colnames(parameter_shared)
+    mif2(
+      panelfood,
+      Nmif = algorithmic.params$Nmif[run_level],
+      shared.start = guessed.parameter.values,
+      rw.sd = rw_sd(
+        sigSn=dent_rw_sd_first['sigSn'],
+        sigF=dent_rw_sd_first['sigF'],
+        theta_Sn=dent_rw_sd_first['theta_Sn'],
+        k_Sn = dent_rw_sd_first['k_Sn'],
+        f_Sn=dent_rw_sd_first['f_Sn'],
+        rn=dent_rw_sd_first['rn'],
+        sigJn = dent_rw_sd_first['sigJn'],
+        theta_Jn = dent_rw_sd_first['theta_Jn']),
+      cooling.type = "geometric",
+      cooling.fraction.50 = 0.7,
+      Np = algorithmic.params$Mp[run_level]
+      
+    ) -> m1
+    
+    ll = replicate(n = algorithmic.params$Np_rep[run_level],
+                    unitLogLik(pfilter(m1,
+                                       Np = algorithmic.params$Np[run_level])))
+    
+    if(DEBUG){      
+      list(mif = m1,
+           ll = panel_logmeanexp(x = ll,
+                                 MARGIN = 1,
+                                 se = TRUE))
+    }else{
+      list(mif_ceof = coef(m1),
+           ll = panel_logmeanexp(x = ll,
+                                 MARGIN = 1,
+                                 se = TRUE))
+    }
+  }
+} -> mf
+
+
+lls = matrix(unlist(sapply(mf, getElement, "ll")), nrow = 2)
+best = which.max(lls[1,])
+mif.estimate = coef(mf[[best]]$mif)
+pf.loglik.of.mif.estimate = unname(mf[[best]]$ll[1])
+s.e.of.pf.loglik.of.mif.estimate = unname(mf[[best]]$ll[2])
+
+trace = as.data.frame(traces(mf[[1]]$mif))
+trace$iter = as.numeric(rownames(trace))
+
+for (i in 2 : length(mf)){
+  tmp_df = as.data.frame(traces(mf[[i]]$mif))
+  tmp_df$iter = as.numeric(rownames(tmp_df))
+  trace = dplyr::bind_rows(trace,tmp_df)
+}
+
+final_likes = numeric(length(mf))
+
+for (i in 1: length(mf)){
+  final_likes[i] = mf[[i]]$ll[1]
+}
+
+final_params = trace %>%
+  dplyr::filter(iter == max(iter, na.rm = TRUE))
+
+final_params$loglik = final_likes
+
+subset_data_theta_Jn = final_params %>%
+  group_by(theta_Jn) %>%
+  filter(loglik == max(loglik))
+
+subset_data_theta_Jn$log_theta_Jn = log(subset_data_theta_Jn$theta_Jn)
+
+subset_data_theta_Jn = subset_data_theta_Jn %>% 
+  ungroup() %>%                                  
+  mutate(
+    bin = cut(
+      log_theta_Jn,
+      breaks = seq(
+        min(log_theta_Jn, na.rm = TRUE),
+        max(log_theta_Jn, na.rm = TRUE),
+        length.out = 51          
+      ),
+      include.lowest = TRUE,
+      right = FALSE
+    )
+  ) %>%                          
+  group_by(bin) %>%                     
+  slice_max(loglik, n = 1, with_ties = FALSE) %>%  
+  ungroup() %>% 
+  select(-bin)
+
+
+mcap(subset_data_theta_Jn$loglik, subset_data_theta_Jn$log_theta_Jn,  
+     level = 0.8, span = 0.95, Ngrid = 1000) -> mcap_object_theta_Jn
+mcap_object_theta_Jn$mle -> theta_Jn_mle
+theta_Jn_p = ggplot() +
+  geom_point(data = subset_data_theta_Jn, aes(x = log_theta_Jn, y = loglik)) +
+  geom_line(data = mcap_object_theta_Jn$fit, aes(x = parameter, y = smoothed), col = 'red') +
+  geom_vline(xintercept = mcap_object_theta_Jn$ci[1], linetype = 'dashed') +
+  geom_vline(xintercept = mcap_object_theta_Jn$ci[2], linetype = 'dashed') +
+  geom_vline(xintercept = mcap_object_theta_Jn$mle, col = 'blue') +
+  geom_vline(xintercept = log(mif.estimate[['theta_Jn']]), col = 'red') +
+  geom_hline(yintercept = pf.loglik.of.mif.estimate, col = 'red',linetype = "longdash") +
+  geom_point(aes(x = log(mif.estimate[['theta_Jn']]), 
+                 y = pf.loglik.of.mif.estimate), 
+             color = "red", size = 2) + 
+  labs(x =  TeX("$\\log(\\theta^n_{J})$"), y = "log likelihood") +
+  theme(axis.text = element_text(size = 11),
+        axis.title = element_text(size = 11)) +
+  theme_bw() +
+  theme(axis.title.y = element_blank())
+
+theta_Jn_p
+```
+
+The contrast between the profile likelihood shapes in @fig-mcap-theta-sn and @fig-mcap-theta-jn reveals fundamental differences in parameter identifiability. For $\theta_{S_n}$, the smoothed profile $\tilde{\ell}_P(\log\theta_{S_n})$ exhibits pronounced curvature with a well-defined interior maximum and relatively narrow MCAP confidence bounds. This behavior indicates strong data informativeness: the likelihood concentrates sharply around a single value, and re-optimization of the remaining parameters at nearby values of $\theta_{S_n}$ yields substantially lower likelihoods.
+
+In marked contrast, the profile for $\theta_{J_n}$ over $\log\theta_{J_n}$ remains nearly flat across the explored parameter range. The MCAP smoothing curve shows minimal deviation from its maximum, and the `mif2` point estimate lies within a broad plateau rather than a distinct peak. This pattern is characteristic of weak or near-non-identification: a wide range of $\theta_{J_n}$ values yield essentially equivalent likelihoods after conditional maximization over the remaining parameters. Under such conditions, the profile shape is dominated by sampling variability and Monte Carlo noise rather than genuine information about the parameter, rendering standard asymptotic confidence interval theory unreliable.
+
+When MCAP profiles reveal weak parameter identification, as observed for $\theta_{J_n}$, two complementary strategies can improve inferential reliability. The first approach involves broadening and intensifying the computational search. Specifically, one should expand the profiling grid to encompass both substantially smaller and larger values of $\log\theta_{J_n}$, testing whether apparent flatness reflects a boundary artifact or genuinely diffuse information. Multiple MIF runs should be initialized from widely dispersed starting points across this expanded grid to ensure that local search has not missed isolated high-likelihood regions. If computational resources permit, increasing particle counts and likelihood replicates can help distinguish true likelihood plateau behavior from Monte Carlo variability masking underlying curvature.
+
+If expanded search confirms persistent flatness, the second strategy is to reduce model parameterization by eliminating the weakly identified parameter. This can be accomplished by fixing $\theta_{J_n}$ at a biologically justified value informed by external data or prior studies, or by imposing a functional constraint linking it to another parameter (e.g., assuming proportionality to $\theta_{S_n}$ based on life-history theory). Removing this effectively unidentifiable degree of freedom stabilizes the optimization landscape for the remaining parameters and can substantially improve precision of their estimates. The refitted model should be compared to the original via information criteria to verify that the constraint does not introduce material bias.
+
+## Section 2: SIRJPF2 Model
+
+### Experimental Design and Data Structure
+
+The SIRJPF2 model addresses the full ecological complexity of the two-species competition experiment: native *D. dentifera* and invasive *D. lumholtzi* competing for a shared algal food resource (*Ankistrodesmus falcatus*) while experiencing infection by the fungal parasite *Metschnikowia bicuspidata*. This experimental treatment consists of $U = 8$ replicated mesocosms, each initialized with both host species in the presence of parasite inoculum. Population densities were quantified at $N = 10$ time points, $t_{u,n} = 5n + 2$ days for $n \in 1:10$, yielding observations of susceptible and infected adults for both species, along with juvenile counts aggregated across species. Parasite spore density and algal resource density remain latent throughout the experiment, inferred through the mechanistic model rather than measured directly.
+
+The PanelPOMP data structure comprises:
+
+- **Units:** $u \in 1:8$ independent mesocosms with two-species competition
+- **Observation times:** $t_{u,n} = 5n + 2$ days for $n \in 1:10$
+- **Observed data:** $y^*_{u,n} = (N^n_{S,u,n}, N^n_{I,u,n}, N^l_{S,u,n}, N^l_{I,u,n}, N^n_{J,u,n}, N^l_{J,u,n})^\top$, comprising counts of susceptible adults, infected adults, and juveniles for both species
+- **Latent process:** $X_u(t) = (S^n_u(t), I^n_u(t), J^n_u(t), S^l_u(t), I^l_u(t), J^l_u(t), P_u(t), F_u(t))^\top$ for $t \in [t_{u,0}, t_{u,N}]$
+
+The state vector components are defined as follows. For each species $k \in \{n, l\}$ where $n$ denotes native *D. dentifera* and $l$ denotes invasive *D. lumholtzi*, we track susceptible adult density $S^k_u(t)$ (uninfected reproductive individuals), infected adult density $I^k_u(t)$ (individuals carrying parasite spores), and juvenile density $J^k_u(t)$ (non-reproductive immature individuals). These compartments are coupled through shared resources: the parasite spore density $P_u(t)$ (measured in spores per liter) mediates transmission between and within species, while the algal food resource density $F_u(t)$ (measured in $10^6$ cells per liter) regulates reproduction and survival for both competitors. Dead or removed individuals transition to the unobserved compartment $R^k_u(t)$, which does not enter the dynamics but represents the absorbing state for mortality and experimental sampling processes.
+
+The SIRJPF2 denotes this state structure: **S**usceptible, **I**nfected, and **R**emoved compartments for disease dynamics; **J**uveniles for age structure; **P**arasite spores for the environmental transmission stage; and **F**ood resource for bottom-up regulation. This framework extends the single-species SRJF model presented in Section 1 by incorporating interspecific competition (shared resource depletion and potential asymmetric interference), parasite-mediated interactions (transmission within and between host species, virulence effects on infected adults), and multi-species observation processes (species-specific detection and overdispersion parameters).
+
+@fig-sirjpf-data displays the observed density trajectories for both host species across all experimental units. The native species typically exhibits the characteristic boom-bust dynamics observed in the parasite-free treatment (Section 1), but with modified amplitudes and timing due to competition and infection. The invasive species shows distinct temporal patterns, with delayed peak densities and differential susceptibility to parasitic infection. These species-specific trajectories, coupled with variation in infection prevalence across units, motivate a mechanistic model that explicitly represents competitive and parasitic interactions rather than phenomenological time-series approaches.
+
+```{r}
+#| label: fig-sirjpf-data
+#| fig-cap: "Observed population densities for *D. dentifera* and *D. lumholtzi* across 8 replicate mesocosms with parasite exposure. Top panel: adult susceptible (blue solid = *D. dentifera*, black dashed = *D. lumholtzi*) and infected (red solid = *D. dentifera*, purple dashed = *D. lumholtzi*) densities. Bottom panel: juvenile densities (orange solid = *D. dentifera*, brown dashed = *D. lumholtzi*). Square-root transformation applied to y-axes for visual clarity. Dynamics exhibit competitive dominance of the native species, variable infection prevalence, and synchronized population crashes characteristic of resource-mediated competition coupled with parasite transmission."
+#| code-fold: true
+#| code-summary: "Show data processing and plotting code"
+#| echo: true
+#| cache: true
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 4
+#| out-width: "100%"
+suppressPackageStartupMessages({
+  suppressWarnings({
+    library(ggplot2)
+    library(gridExtra)
+  })
+})
+
+
+Mesocosm_data <- read.csv(
+  "./data/Mesocosmdata_both_species.csv",
+  check.names = FALSE,
+  na.strings = c("", "NA")
+)
+
+mixed_para <- Mesocosm_data[91:170, ]
+mixed_para <- subset(mixed_para, 
+                     select = c(rep, day, dent.adult, dent.inf, 
+                               lum.adult, lum.adult.inf, dent.juv, lum.juv))
+
+mixed_para <- mixed_para[80:1, ]
+mixed_para$day <- (mixed_para$day - 1) * 5 + 7
+
+
+mixed_para_data <- list()
+trails <- c("K", "L", "M", "N", "O", "P", "Q", "S")
+
+for (i in seq_along(trails)) {
+  mixed_para_data[[i]] <- subset(
+    mixed_para, 
+    select = c("day", "dent.adult", "dent.inf", "lum.adult",
+               "lum.adult.inf", "dent.juv", "lum.juv"),
+    mixed_para$rep == trails[i]
+  )
+}
+
+mixed_para_data_combined <- do.call(rbind, lapply(seq_along(mixed_para_data), function(i) {
+  cbind(mixed_para_data[[i]], Trial = paste("Trial", trails[i]))
+}))
+
+mixed_para_data_combined$Mesocosm <- paste0(rep("Mesocosm ", 80), rep(1:8, each = 10))
+mixed_para_data_combined$Mesocosm <- factor(
+  mixed_para_data_combined$Mesocosm,
+  levels = paste0("Mesocosm ", 1:8)
+)
+
+
+mesocosm_labeller <- as_labeller(function(mesocosm) gsub("Mesocosm ", "Mesocosm-", mesocosm))
+
+
+lum.style <- "twodash"   
+dent.style <- "solid"   
+lum.width <- 0.6
+dent.width <- 0.5
+
+
+p1 <- ggplot(mixed_para_data_combined, aes(x = day)) +
+  geom_line(aes(y = dent.adult), color = "blue", 
+            linewidth = dent.width, linetype = dent.style) +
+  geom_line(aes(y = dent.inf), color = "red", 
+            linewidth = dent.width, linetype = dent.style) +
+  geom_line(aes(y = lum.adult), color = "black", 
+            linewidth = lum.width, linetype = lum.style) +
+  geom_line(aes(y = lum.adult.inf), color = "purple", 
+            linewidth = lum.width, linetype = lum.style) +
+  facet_wrap(~Mesocosm, nrow = 1, labeller = mesocosm_labeller) +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 8),
+    strip.text = element_text(size = 8),
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    plot.margin = margin(0.2, 0.5, 0, 0.5, "cm"),
+    legend.position = "none"
+  ) +
+  ylab("Adult density (ind./L)") +
+  scale_x_continuous(limits = c(0, 52), breaks = c(0, 25, 50)) +
+  scale_y_continuous(trans = "sqrt")
+
+
+p2 <- ggplot(mixed_para_data_combined, aes(x = day)) +
+  geom_line(aes(y = dent.juv), color = "orange", 
+            linewidth = dent.width, linetype = dent.style) +
+  geom_line(aes(y = lum.juv), color = "brown", 
+            linewidth = lum.width, linetype = lum.style) +
+  facet_wrap(~Mesocosm, nrow = 1) +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10),
+    axis.text.x = element_text(size = 8),
+    axis.text.y = element_text(size = 8),
+    strip.text = element_blank(),
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    plot.margin = margin(0, 0.5, 0.2, 0.5, "cm"),
+    legend.position = "none"
+  ) +
+  ylab("Juvenile density (ind./L)") +
+  xlab("Day") +
+  scale_x_continuous(limits = c(0, 52), breaks = c(0, 25, 50)) +
+  scale_y_continuous(trans = "sqrt")
+
+grid.arrange(p1, p2, ncol = 1, heights = c(1, 1))
+```
+
+### Mechanistic Model
+
+#### Model Specification
+
+The SIRJPF2 model describes the coupled dynamics of two competing host species experiencing shared parasitism and resource limitation. For each species $k \in \{n, l\}$ where $n$ denotes native *D. dentifera* and $l$ denotes invasive *D. lumholtzi*, the state vector comprises susceptible adults ($S^k_u$), infected adults ($I^k_u$), and juveniles ($J^k_u$). These populations interact through the shared parasite spore pool ($P_u$) and algal food resource ($F_u$), which are common to both species within each experimental unit $u$.
+
+The latent process evolves according to the following system of stochastic differential equations:
+
+\begin{align}
+    dS^{k}_{u}(t) &= \lambda^{k}_{J} \,  J^{k}_{u}(t) \, dt -
+    \big\{
+    \theta^{k}_{S} + p^{k} \, f^{k}_{S} \, P_{u}(t) + \delta
+    \big\}
+    \, S^{k}_{u}(t)\, dt + S^{k}_{u}(t)\, d\zeta^{k}_{S,u}(t),\\
+    dI^{k}_{u}(t) &= p^{k} \, f^{k}_{S}\,  S^{k}_{u}(t) \, P_{u}(t)\, dt -
+    \big\{
+    \theta^{k}_{I} + \delta
+    \big\}
+    \, I^{k}_{u}(t)\, dt + I^{k}_{u}(t) \, d\zeta^{k}_{I,u}(t),\\ 
+    dJ^{k}_{u}(t) &= r^{k} \, f^{k}_{S} \, F_{u}(t) \, S^{k}_{u}(t)\, dt -
+    \big\{
+    \theta^{k}_{J}  + \delta + \lambda^{k}_{J}
+    \big\} 
+    \, J^{k}_{u}(t)\, dt + J^{k}_{u}(t)\, d\zeta^{k}_{J,u}(t), \\ 
+    dP_{u}(t) &= \sum_{k \in \{n, l\}} \left(\beta^{k} \, \theta^{k}_{I} \,  I^{k}_{u}(t) - f^{k}_{S} \big\{ S^{k}_{u}(t) + \xi I^{k}_{u}(t) \big\} P_{u}(t)\right) dt
+    \\ \nonumber & \hspace{3cm} - \theta_{P} \, P_{u}(t)\, dt + P_{u}(t)\, d\zeta_{P,u}(t),\\
+    dF_{u}(t) &= - \sum_{k \in \{n, l\}} f^{k}_{S} \, F_{u}(t) \left(S^{k}_{u}(t)+\xi_{J} \, J^{k}_{u}(t) +\xi \, I^{k}_{u}(t)\right)dt  + \mu \, dt + F_{u}(t)\, d\zeta_{F,u}(t),
+\end{align}
+
+where the stochastic increments are Gaussian white noise processes:
+
+\begin{aligned}
+d\zeta^{k}_{S,u}(t) &\sim \mathcal{N} \big(0, (\sigma^{k}_{S})^{2}\, dt\big),
+\quad
+d\zeta^{k}_{I,u}(t) \sim \mathcal{N} \big(0, (\sigma^{k}_{I})^{2}\, dt\big),
+\quad
+d\zeta^{k}_{J,u}(t) \sim \mathcal{N} \big(0, (\sigma^{k}_{J})^{2}\, dt\big),\\
+d\zeta_{F,u}(t) &\sim \mathcal{N} \big(0, \sigma_{F}^{2}\, dt\big),
+\quad
+d\zeta_{P,u}(t) \sim \mathcal{N} \big(0, \sigma_{P}^{2}\, dt\big).
+\end{aligned}
+
+#### Biological Mechanisms
+
+The SIRJPF2 model incorporates multiple interacting ecological and epidemiological processes that govern the coupled dynamics of competition and parasitism. Susceptible adults of each species produce juveniles at a rate determined by the product $r^k f^k_S F_u(t) S^k_u(t)$, representing resource-limited reproduction where birth efficiency $r^k$ and filtration rate $f^k_S$ convert algal consumption into offspring production. Juveniles mature into susceptible adults at species-specific rate $\lambda^k_J$, completing the age-structured demographic cycle. Both juveniles and adults experience natural mortality (rates $\theta^k_J$ and $\theta^k_S$, respectively) as well as experimental sampling dilution at rate $\delta$.
+
+Parasite transmission occurs when susceptible adults encounter spores in the water column, with infection rate $p^k f^k_S S^k_u(t) P_u(t)$ governed by the encounter rate (proportional to filtration) and the per-encounter infection probability $p^k$. This formulation assumes frequency-dependent transmission: the per-capita infection rate increases linearly with spore density but does not depend on host density, consistent with environmental transmission through a long-lived infectious stage. Infected adults experience elevated mortality at rate $\theta^k_I > \theta^k_S$, reflecting parasite-induced virulence, and do not reproduce, representing the sterilizing effect of *Metschnikowia* infection. Upon death, infected individuals release $\beta^k$ spores per individual into the environmental pool, with species-specific spore production rates potentially reflecting differences in host body size, infection intensity, or spore maturation dynamics.
+
+The parasite spore pool $P_u(t)$ is governed by a balance between production, consumption, and environmental decay at rate $\theta_P$. This formulation captures the dual role of host feeding: ingestion of spores mediates transmission but simultaneously removes spores from the water column, creating a negative feedback on infection dynamics. The shared spore pool couples the epidemiological dynamics of the two species, enabling cross-species transmission and apparent competition mediated by the parasite.
+
+The algal food resource $F_u(t)$ is depleted by consumption from all host classes (susceptible and infected adults, juveniles) of both species, with species-specific filtration rates $f^k_S$ and class-specific scaling factors $\xi_J$ and $\xi$ representing reduced feeding rates of juveniles and infected adults relative to susceptible adults. Resource replenishment at rate $\mu$ reflects the twice-weekly algal supplementation in the experimental protocol. This shared resource creates exploitative competition between species: consumption by one species reduces resource availability for the other, with competitive outcomes determined by the balance between species-specific birth rates, mortality rates, and resource acquisition efficiencies.
+
+The complete model structure, including a flow diagram illustrating all state transitions and parameter interactions, is presented in Figure 1 and Section 3 of the main text. Detailed parameter definitions, biological interpretations, and estimated values are provided in Tables 1–2 of the main text and Section S7 of the Supplement. The model represents a mechanistic synthesis of competition theory (resource-mediated interactions), disease ecology (environmental transmission with frequency-dependent dynamics), and life-history theory (age structure with discrete maturation), enabling inference about the mechanisms governing multi-species coexistence under shared parasitism.
+
+### Parameter Estimation via Panel Iterated Filtering
+
+Marginalized panel iterated filtering (MPIF) is designed for panel models containing unit-specific as well as shared parameters. In the `panelPomp` implementation, MPIF is selected in `mif2()` through the legacy argument `block = TRUE`, which changes the resampling treatment of unit-specific parameter particles across panel units. This use of “block” should not be confused with temporal block sampling or spatial block particle filters; those methods address different algorithms. The marginalized-Bayes-map interpretation of MPIF is developed by @wheeler25.
+
+The SIRJPF2 specification used here contains only shared parameters. Consequently, it provides no unit-specific parameter particles for MPIF to marginalize, and a `block = TRUE` versus `block = FALSE` comparison is not informative for this model. We therefore use standard panel iterated filtering for SIRJPF2 and present the MPIF implementation in the unit-specific SRJF example above.
+
+Below we present the complete implementation of standard panel iterated filtering for the SIRJPF2 model.
+
+```{r}
+#| cache: true
+dyn_rpro = Csnippet("
+  double Sn_term, In_term, F_term, P_term , Si_term, Ii_term,Jn_term,Ji_term;
+  double noiSn, noiIn, noiSi , noiIi ,noiF, noiP,noiJn,noiJi;
+  double delta = 0.013; //fraction of volume replaced day-1
+
+  noiSn = rnorm(0, sigSn * sqrt(dt));
+  noiIn = rnorm(0, sigIn * sqrt(dt));
+  noiSi = rnorm(0, sigSi * sqrt(dt));
+  noiIi = rnorm(0, sigIi * sqrt(dt));
+  noiJn = rnorm(0, sigJn * sqrt(dt));
+  noiJi = rnorm(0, sigJi * sqrt(dt));
+  noiF = rnorm(0, sigF * sqrt(dt));
+  noiP = rnorm(0, sigP * sqrt(dt));
+
+
+  //------------Sn-------------
+  Sn_term = 0.1 * Jn * dt - theta_Sn * Sn * dt -  probn * f_Sn * Sn * P * dt - delta * Sn * dt + Sn * noiSn;
+    
+  //-----------Jn-------------
+  
+  Jn_term = rn * f_Sn * F * Sn  * dt  -  0.1 * Jn * dt - theta_Jn * Jn * dt - delta * Jn * dt + Jn * noiJn;
+  
+  //------------In--------------
+
+  In_term = probn * f_Sn * Sn * P * dt - theta_In * In *dt - delta * In * dt + In * noiIn;
+
+  //------------Si-------------
+  Si_term = 0.1 * Ji * dt - theta_Si * Si * dt -  probi * f_Si * Si * P * dt - 
+  delta * Si * dt + Si * noiSi;
+
+  //-----------Ji-------------
+  
+  Ji_term = ri * f_Si *F * Si  * dt - 0.1 * Ji * dt - 
+  theta_Ji * Ji * dt - delta * Ji * dt + Ji * noiJi;
+  
+  //------------Ii--------------
+
+  Ii_term = probi * f_Si * Si * P * dt - theta_Ii * Ii *dt - delta * Ii * dt + Ii * noiIi;
+
+
+  //-----------F---------------
+
+  F_term =  F * noiF - f_Sn * F * (Sn + xi * In + 1 * Jn) * dt - 
+  f_Si * F * (Si + xi * Ii + 1 * Ji) * dt - delta * F * dt + 0.37 * dt;
+
+
+  //----------P---------------
+
+  P_term = 30 * theta_In * In * dt + 30 * theta_Ii * Ii * dt - 
+  f_Sn * (Sn + xi * In) * P * dt - f_Si * (Si + xi * Ii) * P * dt- 
+  theta_P * P * dt - delta * P * dt + P * noiP;
+
+
+  //T_D and T_I are the S and I Daphnia sample out
+  F += F_term;
+  Sn += Sn_term;
+  In += In_term;
+  Si += Si_term;
+  Ji += Ji_term;
+  Jn += Jn_term;
+  Ii += Ii_term;
+  P += P_term;
+  
+  //Trace time
+  
+ if (t - 4.0 < 0.001 && t - 4.0 > -0.001){
+  //Initial statement
+    P += 25;
+  }
+  
+  
+  if (Sn < 0.0 || Sn > 1e5) {
+    Sn = 0.0;
+    error_count += 1;
+  }
+  if (Si < 0.0 || Si > 1e5) {
+    Si = 0.0;
+    error_count += 1000000;
+  }
+  if (F < 0.0 || F > 1e20) {
+    F = 0.0;
+    error_count += 1000;
+  }
+  if (In < 0.0 || In > 1e5) {
+    In = 0.0;
+    error_count += 0.001;
+  }
+  if (Ii < 0.0 || Ii > 1e5) {
+    Ii = 0.0;
+    error_count += 0.000000001;
+  }
+  if (Jn < 0.0 || Jn > 1e5) {
+    Jn = 0.0;
+    error_count += 0.001;
+  }
+  if (Ji < 0.0 || Ji > 1e5) {
+    Ji = 0.0;
+    error_count += 0.000000001;
+  }   
+  if ((P < 0.0 || P > 1e20)&& t > 3.9) {
+    P = 0.0;
+    error_count += 0.000001;
+  }
+  
+  //T_Sn = 15 * delta * Sn * dt;
+  //T_In = 15 * delta * In * dt;
+  //T_Si = 15 * delta * Si * dt;
+  //T_Ii = 15 * delta * Ii * dt;
+  
+  T_Sn = fabs(Sn);
+  T_In = fabs(In);
+  T_Si = fabs(Si);
+  T_Ii = fabs(Ii);
+  
+
+                      ")
+
+# Initial state. Assume t0 = day 4
+dyn_init = Csnippet("
+   Sn = 2.333; //2.3333 = 35/15L
+   Si = 0.667; //0.667 = 10/15L
+   F = 16.667;
+   Jn = 0;
+   Ji = 0;
+   
+   T_Sn = 0.0;
+   T_Si = 0.0;
+   T_In = 0.0;
+   T_Ii = 0.0;
+   In = 0.0;
+   Ii = 0.0;
+   
+   error_count = 0.0;
+   
+   //add 25 P at day 4
+   P = 0;
+                     ")
+
+
+
+dmeas = Csnippet("
+ 
+ if (error_count > 0.0) {
+   lik = -150;
+  }
+ else{
+    if(give_log){
+    lik  = dnbinom_mu(lumadult,k_Si,T_Si,give_log) +  
+    dnbinom_mu(luminf,k_Ii,T_Ii,give_log) + 
+    dnbinom_mu(dentadult,k_Sn,T_Sn,give_log) +  
+    dnbinom_mu(dentinf,k_In,T_In,give_log);
+    }
+    else{
+    lik  = dnbinom_mu(lumadult,k_Si,T_Si,give_log) *  
+    dnbinom_mu(luminf,k_Ii,T_Ii,give_log) * 
+    dnbinom_mu(dentadult,k_Sn,T_Sn,give_log) *  
+    dnbinom_mu(dentinf,k_In,T_In,give_log);
+    }
+      }
+                 ")
+
+rmeas = Csnippet("
+   dentadult = rnbinom_mu(k_Sn,T_Sn);
+   dentinf = rnbinom_mu(k_In,T_In);
+   lumadult = rnbinom_mu(k_Si,T_Si);
+   luminf = rnbinom_mu(k_Ii,T_Ii);
+                 ")
+
+pt = parameter_trans(
+  #Without death part
+  log = c( "sigSn", "sigIn", "sigSi", "sigIi", "sigF","sigP","f_Sn","f_Si",
+           "rn","ri","k_Ii","k_In","k_Sn","k_Si","sigJi","sigJn","probn","probi",
+           "theta_Sn","theta_In","theta_Si","theta_Ii","theta_P","theta_Jn","theta_Ji","xi"),
+)
+
+pomplist=list()
+
+parameters =         c(   8.34e-06,     0.4,    0.5,    0.8,     0.2,     0.01,  0.2,    0.15,       
+                          0.07 ,   0.2,       0.01,    0.096  , 0.0035 ,0.003 , 0.2  , 
+                          0.4, 0.6  ,0.8 ,8,8,8,8,1,1,0.1,0.1)
+names(parameters) =  c("xi", "sigSn", "sigIn", "sigSi", "sigIi", "sigF","sigP","theta_Sn",
+                       "theta_In","theta_Si","theta_P","theta_Ii","f_Sn","f_Si","rn","ri","probn",
+                       "probi","k_Ii","k_In","k_Sn","k_Si","sigJi","sigJn","theta_Jn","theta_Ji")
+
+dentNoPara = Mesocosm_data[91:170, ]
+dentNoPara = subset(dentNoPara, select = c(rep, day, dent.adult,dent.inf,lum.adult,lum.adult.inf))
+dentNoPara = dentNoPara[80: 1, ]
+dentNoPara$day = (dentNoPara$day - 1) * 5 + 7
+data = list()
+trails = c("K","L","M","N","O","P","Q","S")
+for (i in 1: length(trails)){
+  data[[i]]=subset(dentNoPara, select = c("day", "dent.adult","dent.inf","lum.adult","lum.adult.inf"),
+                   dentNoPara$rep == trails[i])
+}
+
+for (i in 1:8){
+  colnames(data[[i]]) = c('day', 'dentadult', 'dentinf','lumadult','luminf')
+  pomp(data = data[[i]],
+   times = "day",
+   t0=1,
+   rprocess=euler(dyn_rpro,delta.t=1/4),
+   rinit = dyn_init,
+   dmeasure = dmeas,
+   rmeasure = rmeas,
+   partrans = pt,
+   obsnames = c("dentadult", "dentinf","lumadult","luminf"),
+   accumvars = c("error_count"),
+   paramnames = c("xi","sigSn", "sigIn", "sigSi", "sigIi", 
+                  "sigF","sigP","theta_Sn","theta_In","theta_Si","theta_P",
+                  "theta_Ii","f_Sn","f_Si","rn","ri","probn",
+                  "probi","k_Ii","k_In","k_Sn","k_Si","sigJi",
+                  "sigJn","theta_Jn","theta_Ji"),
+   statenames = c("Sn",  "In", "Si","Jn","Ji" , "Ii","error_count", 
+                  "F", "T_Sn","T_In","T_Si","T_Ii","P")
+) -> pomplist[[i]]
+coef(pomplist[[i]])=parameters
+}
+names(pomplist)=paste("u", 1:8,sep = "")
+
+
+
+shared_parameter = c(
+  ri = 13076, rn = 59.04676, f_Si = 1.838259e-05, f_Sn = 0.001105668, probi = 31.10083,
+  probn = 0.2565626, xi = 28.6562, theta_Sn = 0.1479834, theta_Si = 0.0318604,
+  theta_Ii = 0.3531879, theta_In = 0.5489315, theta_P = 0.02024991, theta_Ji = 0.0001299562,
+  theta_Jn = 0.0001532613, sigSn = 0, sigSi = 0, sigIn = 0.0003063207,
+  sigIi = 0.02208698, sigJi = 0.2727418, sigJn = 0.2836891, sigF = 0.1551729, sigP = 0.238589,
+  k_Ii = 1.241092, k_In = 1.005756, k_Si = 4.715556, k_Sn = 4.282648
+)
+
+
+
+panelfood = panelPomp(pomplist, shared=shared_parameter)
+
+
+algorithmic.params = list(
+  Np =     c(50, 500, 1000),
+  Np_rep = c( 2,  10,  10),
+  Mp =     c(50, 500, 1000),
+  Nmif =   c( 2,  300, 250)
+)
+
+
+dent_rw.sd= 0.05
+parameter_candidates = list(shared_parameter)
+names(parameter_candidates)=c("shared")
+U = length(panelfood)
+{
+foreach(
+i = 1:(2*getDoParWorkers()),
+.packages = c("pomp", "panelPomp"),
+.inorder = FALSE,
+.options.multicore = list(set.seed = TRUE)
+) %dopar%
+{
+  guessed.parameter.values = parameter_candidates
+  mif2(
+    panelfood,
+    Nmif = algorithmic.params$Nmif[run_level],
+    block = FALSE,
+    shared.start = guessed.parameter.values$shared,
+    rw.sd = rw_sd(xi=dent_rw.sd,
+                  sigSn=0,
+                  sigIn=dent_rw.sd,
+                  sigSi=0,
+                  sigIi=dent_rw.sd,
+                  sigF=dent_rw.sd,
+                  theta_Sn=dent_rw.sd,
+                  theta_In=dent_rw.sd,
+                  theta_Si=dent_rw.sd,
+                  theta_P=dent_rw.sd,
+                  theta_Ii=dent_rw.sd,
+                  k_Sn = dent_rw.sd,
+                  k_In = dent_rw.sd,
+                  k_Si = dent_rw.sd,
+                  k_Ii = dent_rw.sd,
+                  f_Sn=dent_rw.sd,
+                  f_Si=dent_rw.sd,
+                  rn=dent_rw.sd,
+                  ri=dent_rw.sd,
+                  probn=dent_rw.sd,
+                  probi=dent_rw.sd,
+                  sigP = dent_rw.sd,
+                  sigJi = dent_rw.sd,
+                  sigJn = dent_rw.sd,
+                  theta_Jn = dent_rw.sd,
+                  theta_Ji = dent_rw.sd),
+    cooling.type = "geometric",
+    cooling.fraction.50 = 0.7,
+    Np = algorithmic.params$Mp[run_level]
+  ) -> m1
+  
+  ll = replicate(n = algorithmic.params$Np_rep[run_level],
+                  unitLogLik(pfilter(m1,
+                                     Np = algorithmic.params$Np[run_level])))
+  
+  list(mif = m1,
+       ll = panel_logmeanexp(x = ll,
+                             MARGIN = 1,
+                             se = TRUE))
+}
+} -> mf_sirjpf2
+
+lls_sirjpf2 = matrix(
+  unlist(sapply(mf_sirjpf2, getElement, "ll")),
+  nrow = 2
+)
+best_sirjpf2 = which.max(lls_sirjpf2[1, ])
+mif.estimate_sirjpf2 = coef(mf_sirjpf2[[best_sirjpf2]]$mif)
+pf.loglik.of.mif.estimate_sirjpf2 = unname(
+  mf_sirjpf2[[best_sirjpf2]]$ll[1]
+)
+s.e.of.pf.loglik.of.mif.estimate_sirjpf2 = unname(
+  mf_sirjpf2[[best_sirjpf2]]$ll[2]
+)
+```
+
+The SIRJPF2 searches use standard PIF because the fitted specification contains only shared parameters. The terminal parameter estimates are evaluated by replicated particle filters, and the search with the largest estimated panel log-likelihood is retained for subsequent inference.
