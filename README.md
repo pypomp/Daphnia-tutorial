@@ -2,7 +2,7 @@
 
 This repository contains the tutorial materials (Supplement 2) for the article: *Mechanistic models for panel data: Analysis of ecological experiments with four interacting species* ([https://arxiv.org/abs/2506.04508](https://arxiv.org/abs/2506.04508)).
 
-The tutorial provides step-by-step guidance for implementing Panel Iterated Filtering (PIF) methods using the `panelPomp` R package.
+The tutorial provides step-by-step guidance for implementing Panel Iterated Filtering (PIF) and Marginalized Panel Iterated Filtering (MPIF) method using the `panelPomp` R/Python package.
 
 ## Prerequisites
 
