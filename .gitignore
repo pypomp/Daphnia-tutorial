@@ -4,3 +4,6 @@
 
 # For Emacs users
 *~
+
+# Fingerprinted pickle caches written by the Python tutorial
+Python-code/cache_daphnia-qmd-cache-v*_*/
