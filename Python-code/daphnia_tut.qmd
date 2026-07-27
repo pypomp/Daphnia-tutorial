@@ -1104,7 +1104,7 @@ The well-scaled initial parameters yield a finite panel log-likelihood with smal
 #| code-fold: true
 #| fig-width: 10
 #| fig-height: 4
-#| fig-cap: "Unit-level log-likelihood contributions under correctly scaled (left) and mis-scaled (right) parameters. The flat mis-scaled panel reflects the fixed $-150$ log-likelihood penalty applied after constraint violations; it should not be interpreted as equal fit across units. Dashed lines show the mean finite contribution."
+#| fig-cap: "Unit-level log-likelihood contributions under correctly scaled (left) and mis-scaled (right) parameters. Bars are measured from each panel's own mean, shown dashed, while both vertical axes retain absolute log-likelihood coordinates; note the very different scales. Mis-scaling costs roughly $140$ log units per unit and does so unevenly, because the fixed $-150$ penalty applies once per violating observation and units differ in how many of their observations violate a state bound."
 
 fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=False)
 
@@ -1173,7 +1173,7 @@ axes[1].tick_params(axis="both", labelsize=FONTS["tick"])
 fig.tight_layout()
 ```
 
-Under correctly scaled parameters, unit-level log-likelihoods exhibit moderate variation reflecting differences among observed trajectories. Under mis-scaling, the contributions collapse toward a common likelihood floor because the measurement model assigns a fixed log-likelihood penalty of $-150$ whenever `error_count > 0`. The absence of between-unit variation is therefore evidence of repeated constraint violations, not evidence that the units are fitted equally well.
+Under correctly scaled parameters, unit-level log-likelihoods exhibit moderate variation reflecting differences among observed trajectories. Under mis-scaling every unit is far worse, by of order $140$ log units, and the degradation is uneven rather than uniform. This is what the measurement model's fixed $-150$ penalty produces when `error_count > 0`: the penalty is applied once per violating observation, so a unit whose trajectory violates a state bound at many observation times is pushed much lower than one that violates at a few. The spread across the mis-scaled panel therefore counts constraint violations; it is not a measure of how well the units are otherwise described. In the limit where every observation of every unit violates, the panel log-likelihood would reach $-150 \times U \times N = -15{,}000$.
 
 The well-scaled panel filters cleanly and mis-scaling is detectable rather than silent, so we proceed to maximum-likelihood estimation. The next subsection sets the algorithmic budget and perturbation scheme that the MIF call inherits.
 
