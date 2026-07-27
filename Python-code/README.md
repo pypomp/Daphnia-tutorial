@@ -67,9 +67,14 @@ counts, iterations, independent starts and likelihood replicates together:
 
 | Level | Purpose | Typical cost |
 |-------|---------|--------------|
-| 1 | Structural smoke test; numerical gates cannot pass | minutes |
-| 2 | Numerical validation | about an hour on one A40 |
-| 3 | High-compute candidate reproduction | several hours on one A40 |
+| 1 | Structural smoke test; numerical gates cannot pass | about 6 minutes on a CPU |
+| 2 | Numerical validation | about 9 minutes on an idle A40 |
+| 3 | High-compute candidate reproduction | about 24 minutes on an idle A40 |
+
+The GPU timings are measured wall times from complete renders on 27 July 2026.
+They are sensitive to contention: the same level-2 render took 48 minutes on a
+card that was already 64 % busy. Most of a level-3 run is the
+$\theta^n_J$ profile, which alone takes about 18 minutes.
 
 ```bash
 DAPHNIA_RUN_LEVEL=2 DAPHNIA_FORCE_RECOMPUTE=1 quarto render daphnia_tut.qmd

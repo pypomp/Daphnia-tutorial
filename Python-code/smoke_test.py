@@ -70,7 +70,7 @@ def python_chunks(path: Path) -> list[tuple[str, int, str]]:
 
 def main() -> int:
     chunks = python_chunks(QMD)
-    print(f"{QMD.name}: {len(chunks)} Python chunks, run_level=1, CPU\n")
+    print(f"{QMD.name}: {len(chunks)} Python chunks, run_level=1, CPU\n", flush=True)
     namespace: dict = {"__name__": "__main__"}
     started = time.time()
     for index, (label, lineno, body) in enumerate(chunks, 1):
@@ -83,7 +83,7 @@ def main() -> int:
             traceback.print_exc()
             return 1
         print(f"  {index:2d}/{len(chunks)}  {label:<40s} "
-              f"{time.time() - chunk_started:7.1f}s")
+              f"{time.time() - chunk_started:7.1f}s", flush=True)
     print(f"\nAll {len(chunks)} chunks executed in "
           f"{time.time() - started:.0f}s. Structure is sound; numerical gates "
           "at run level 1 are not meaningful.")

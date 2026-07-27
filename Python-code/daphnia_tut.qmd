@@ -1772,7 +1772,14 @@ print(f"theta_Sn profile wall: {TIMINGS['srjf_profile_theta_Sn']:.1f}s "
       f"(nprof={nprof_Sn}, starts={nprof_Sn}, J={J_mif}, M={M_mif})")
 
 mif_log_Sn = float(np.log(srjf_mle_theta[focal_Sn]))
-raw_max_idx_Sn = _finite_argmax(ll_grid_Sn)
+# Judge the profile that is actually fitted and displayed. Taking the maximum
+# over the full grid would let a point already classified as a filter artefact,
+# and already removed from the fit, define the profile maximum -- and then fail
+# the profile for disagreeing with the unrestricted likelihood, which is the
+# very reason it was excluded.
+kept_idx_Sn = np.flatnonzero(keep_Sn)
+best_kept_Sn = _finite_argmax(ll_grid_Sn[keep_Sn])
+raw_max_idx_Sn = int(kept_idx_Sn[best_kept_Sn])
 profile_max_gap_Sn = float(ll_grid_Sn[raw_max_idx_Sn] - best_ll)
 profile_gap_se_Sn = float(np.sqrt(
     se_grid_Sn[raw_max_idx_Sn] ** 2 + best_ll_se ** 2
@@ -1787,7 +1794,7 @@ mcap_Sn_checks = {
         np.nanmax(se_grid_Sn) <= PROFILE_MCSE_LIMIT
     ),
     "raw profile maximum is interior": (
-        raw_max_idx_Sn not in (0, len(ll_grid_Sn) - 1)
+        best_kept_Sn not in (0, int(np.sum(keep_Sn)) - 1)
     ),
     "MCAP interval is finite and two-sided": (
         mcap_Sn.ci[0] is not None and mcap_Sn.ci[1] is not None
@@ -1929,7 +1936,11 @@ _emit_gated_figure(
         "Validated MCAP profile log-likelihood for $\\theta^n_S$ on the log "
         "scale. Points and error bars are independently evaluated profile "
         "log-likelihoods with $\\pm 2$ MCSE; curves and vertical markers show "
-        "the MCAP smoothing, interval, and unrestricted estimate."
+        "the MCAP smoothing, interval, and unrestricted estimate. Grid points "
+        "that exceed the unrestricted log-likelihood, or that fall far below "
+        "the best usable point, are filter artefacts rather than likelihood "
+        "evaluations; they are excluded from the fit, marked at the axis, and "
+        "listed with their exclusion reason in the raw table above."
     ),
     profile_name="theta_Sn MCAP",
     failed_checks=mcap_Sn_failed_checks,
@@ -1979,8 +1990,11 @@ if mcap_Jn_warnings:
 print(f"theta_Jn profile wall: {TIMINGS['srjf_profile_theta_Jn']:.1f}s "
       f"(nprof={nprof_Jn}, starts={nprof_Jn}, J={J_mif}, M={M_mif})")
 
-raw_max_idx_Jn = _finite_argmax(ll_grid_Jn)
-mcap_Jn_interior = raw_max_idx_Jn not in (0, len(ll_grid_Jn) - 1)
+# As for theta_Sn: assess the fitted profile, not points already excluded.
+kept_idx_Jn = np.flatnonzero(keep_Jn)
+best_kept_Jn = _finite_argmax(ll_grid_Jn[keep_Jn])
+raw_max_idx_Jn = int(kept_idx_Jn[best_kept_Jn])
+mcap_Jn_interior = best_kept_Jn not in (0, int(np.sum(keep_Jn)) - 1)
 mcap_Jn_two_sided = (
     mcap_Jn.ci[0] is not None and
     mcap_Jn.ci[1] is not None and
