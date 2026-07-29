@@ -14,6 +14,25 @@ models; they differ in how closely they follow the R version.
 > own source and should be regarded as out of date; read `daphnia_tut.qmd`
 > rather than its rendered output until it is re-rendered.
 
+### Files needed to reproduce `daphnia_tut_v2`
+
+Required:
+
+| File | Why |
+|---|---|
+| `Python-code/daphnia_tut_v2.qmd` | the tutorial source |
+| `Python-code/bib-daphnia.bib` | bibliography named in the YAML header |
+| `data/Mesocosmdata.xls` | the data; sheets `dent-only treatments` and `both species combined` |
+
+Plus Quarto, a Jupyter kernel, and the pinned Pypomp checkout below. Select the
+interpreter with `QUARTO_PYTHON=$(command -v python)`; do not rely on a
+`_quarto.yml`, which pins an absolute path valid only on one machine.
+
+Useful but not required: `render_gpu_v2.sh` (cluster wrapper),
+`make_standalone_html.py` (inlines images afterwards), `smoke_test.py`
+(pre-flight check) and `validate_tutorial_html.py` (release check).
+`build_v2.py` only regenerates the `.qmd` and is not needed to render it.
+
 ### Prerequisites
 
 The tutorials pin an exact Pypomp revision. They require Pypomp 0.4.6.0 at commit

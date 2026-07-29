@@ -27,10 +27,11 @@ The R version needs `pomp`, `panelPomp` and `tidyverse`; see
 [`R-code`](R-code).
 
 The Python version pins an exact Pypomp revision and will stop with an error if
-a different one is installed. Four files are enough to reproduce it —
-`Python-code/daphnia_tut_v2.qmd`, `Python-code/bib-daphnia.bib`,
-`Python-code/_quarto.yml` and `data/Mesocosmdata.xls` — plus Quarto and the
-pinned Pypomp checkout. See [`Python-code`](Python-code) for the exact commit,
-the GPU settings and the run levels.
+a different one is installed. Three files are enough to reproduce it —
+`Python-code/daphnia_tut_v2.qmd`, `Python-code/bib-daphnia.bib` and
+`data/Mesocosmdata.xls` — plus Quarto and the pinned Pypomp checkout. Point
+Quarto at the right interpreter with `QUARTO_PYTHON`. See
+[`Python-code`](Python-code) for the exact commit, the GPU settings and the run
+levels.
 
 Source code for this tutorial is at <https://github.com/pypomp/Daphnia-tutorial>.
