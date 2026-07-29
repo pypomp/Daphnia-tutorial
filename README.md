@@ -22,7 +22,6 @@ it a particle filter can return log-likelihoods that are not merely imprecise
 but impossible.
 
 ### Reproducing the tutorials
-
 The R version needs `pomp`, `panelPomp` and `tidyverse`; see
 [`R-code`](R-code).
 
