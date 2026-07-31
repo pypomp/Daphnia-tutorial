@@ -94,7 +94,7 @@ def parse_args() -> argparse.Namespace:
         "html",
         nargs="?",
         type=Path,
-        default=Path("daphnia_tut_standalone.html"),
+        default=Path("daphnia_tut_pypomp_standalone.html"),
     )
     parser.add_argument(
         "--standalone",

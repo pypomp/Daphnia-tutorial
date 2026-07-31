@@ -29,8 +29,9 @@ Plus Quarto, a Jupyter kernel, and the pinned Pypomp checkout below. Select the
 interpreter with `QUARTO_PYTHON=$(command -v python)`; do not rely on a
 `_quarto.yml`, which pins an absolute path valid only on one machine.
 
-Useful but not required: `render_gpu.sh` with its `render_gpu_level2.sh` and
-`render_gpu_level3.sh` wrappers (cluster submission), `make_standalone_html.py`
+Useful but not required: `render_gpu.sh` with its `render_gpu_level2.sh`,
+`render_gpu_level3.sh` and `render_gpu_both.sh` wrappers (cluster submission),
+`make_standalone_html.py`
 (inlines images afterwards), `embed_quarto_deps.py` (attaches the Quarto page
 dependencies, and gates on them), `smoke_test.py` (pre-flight check) and
 `validate_tutorial_html.py` (release check).
@@ -132,6 +133,25 @@ run as the measurement. Render it by naming it:
 ```bash
 DAPHNIA_DOC=daphnia_tut_pypomp_advanced ./render_gpu_level2.sh
 ```
+
+### Rendering both tutorials
+
+`render_gpu_both.sh` renders both, one after the other, in a single allocation:
+
+```bash
+DAPHNIA_RUN_LEVEL=2 ./render_gpu_both.sh
+```
+
+Do not submit the two documents as concurrent jobs. `DENO_DIR`, `TMPDIR` and
+Quarto's `.quarto/` directory are per-user rather than per-job, and each level
+wrapper clears the Deno cache as it starts, so a second job would pull that
+cache out from under a render already in flight; two double-precision jobs also
+contend for the card. Sequential rendering is what makes one submission safe.
+
+Each document goes through the full chain, so anything that lands in place is
+self-contained and correctly styled. The second is attempted even if the first
+fails — the allocation is already paid for — and the closing summary lists each
+document as published or not.
 
 ### Checking a change before a long run
 

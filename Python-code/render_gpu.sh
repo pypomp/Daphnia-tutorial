@@ -44,6 +44,11 @@ fi
 echo "---RENDER: doc=$DOC run_level=$DAPHNIA_RUN_LEVEL start $(date)---"
 nvidia-smi 2>&1 | head -10
 
+# Clear the previous published document first. Without this, a render that
+# dies before writing anything leaves the *old* file in place, and the
+# packaging below would republish it as though it were new.
+rm -f "$DOC.html" "${DOC}_standalone.html"
+
 # Quarto exhausts memory embedding resources on this cluster, so images are
 # left external here and inlined below.
 quarto render "$DOC.qmd" -M embed-resources:false
