@@ -9,8 +9,8 @@ Instead, it focuses on guiding the reader through issues involved in the practic
   The rendered document is [`tut.html`](https://pypomp.github.io/Daphnia-tutorial/R-code/tut.html).
 
 * The [Python version of the tutorial](Python-code) uses the Python package [`pypomp`](https://github.com/pypomp). It is designed to run on a GPU, but will also run on a multi-core CPU.
-  The rendered document is [`daphnia_tut_v2.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_v2.html), which follows the R version section by section and reports the same analyses.
-  An [extended Python version](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut.html) adds numerical validation gates and a discussion of GPU execution.
+  The rendered document is [`daphnia_tut_pypomp.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_pypomp.html), which follows the R version section by section and reports the same analyses.
+  A second source, `daphnia_tut_pypomp_advanced.qmd`, departs from the R version: it adds numerical validation gates, profile screening, a CPU/GPU section and per-section timings. It is awaiting a re-render and has no published document yet.
 
 The two languages give the same models, starting values and algorithmic
 settings, so their results agree up to Monte Carlo error. Two differences are
@@ -27,7 +27,7 @@ The R version needs `pomp`, `panelPomp` and `tidyverse`; see
 
 The Python version pins an exact Pypomp revision and will stop with an error if
 a different one is installed. Three files are enough to reproduce it —
-`Python-code/daphnia_tut_v2.qmd`, `Python-code/bib-daphnia.bib` and
+`Python-code/daphnia_tut_pypomp.qmd`, `Python-code/bib-daphnia.bib` and
 `data/Mesocosmdata.xls` — plus Quarto and the pinned Pypomp checkout. Point
 Quarto at the right interpreter with `QUARTO_PYTHON`. See
 [`Python-code`](Python-code) for the exact commit, the GPU settings and the run

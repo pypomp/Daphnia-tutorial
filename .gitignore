@@ -1,9 +1,31 @@
+# --- editor and OS noise ---
 **/.DS_Store
 **/.Rhistory
 **/.*.swp
-
-# For Emacs users
 *~
+*.save
 
-# Fingerprinted pickle caches written by the Python tutorial
-Python-code/cache_daphnia-qmd-cache-v*_*/
+# --- Quarto working state ---
+**/.quarto/
+**/_freeze/
+**/*.quarto_ipynb
+**/__pycache__/
+
+# --- render intermediates -------------------------------------------
+# The published .html files are self-contained. These are the loose figures
+# and the vendored libs that went into them, plus the packaging intermediate
+# that render_gpu.sh renames over the published file.
+Python-code/*_files/
+Python-code/*_standalone.html
+R-code/*_files/
+
+# --- computation caches ---
+# Fingerprinted pickle caches written by the advanced Python tutorial.
+Python-code/cache_*/
+
+# --- SGE job output ---
+*.e[0-9]*
+*.o[0-9]*
+*.pe[0-9]*
+*.po[0-9]*
+*.log
