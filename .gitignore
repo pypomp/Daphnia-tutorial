@@ -18,6 +18,10 @@
 Python-code/*_files/
 Python-code/*_standalone.html
 R-code/*_files/
+# Quarto 1.4 leaves the unexecuted notebook behind when a render fails, and
+# render_gpu.sh parks the last published document here while it rebuilds.
+Python-code/*.ipynb
+Python-code/*.html.prev
 
 # --- computation caches ---
 # Fingerprinted pickle caches written by the advanced Python tutorial.

@@ -44,10 +44,22 @@ fi
 echo "---RENDER: doc=$DOC run_level=$DAPHNIA_RUN_LEVEL start $(date)---"
 nvidia-smi 2>&1 | head -10
 
-# Clear the previous published document first. Without this, a render that
-# dies before writing anything leaves the *old* file in place, and the
-# packaging below would republish it as though it were new.
-rm -f "$DOC.html" "${DOC}_standalone.html"
+# Set the previously published document aside rather than deleting it. A
+# render that dies before writing anything must not leave the old file in
+# place -- the packaging below would republish it as though it were new -- but
+# it must not destroy it either, or a failed job silently unpublishes the last
+# good document. restore_previous() puts it back on every failure path.
+rm -f "${DOC}_standalone.html"
+if [ -f "$DOC.html" ]; then
+  mv "$DOC.html" "$DOC.html.prev"
+fi
+
+restore_previous() {
+  if [ -f "$DOC.html.prev" ]; then
+    mv "$DOC.html.prev" "$DOC.html"
+    echo "---RESTORED: previous $DOC.html left in place at $(date)---" >&2
+  fi
+}
 
 # Quarto exhausts memory embedding resources on this cluster, so images are
 # left external here and inlined below.
@@ -61,19 +73,24 @@ echo "---RENDER: exit=$render_status at $(date)---"
 # does not.
 if [ ! -f "$DOC.html" ]; then
   echo "---ABORT: no $DOC.html to package at $(date)---" >&2
+  restore_previous
   exit "${render_status:-1}"
 fi
 
-python make_standalone_html.py "$DOC.html" "${DOC}_standalone.html" || exit 1
+python make_standalone_html.py "$DOC.html" "${DOC}_standalone.html" \
+  || { restore_previous; exit 1; }
 python embed_quarto_deps.py "${DOC}_standalone.html" \
-  --libs "${DOC}_files/libs" || exit 1
+  --libs "${DOC}_files/libs" || { restore_previous; exit 1; }
 echo "---PACKAGE: ok at $(date)---"
 
 # The gate. A dead Deno stage leaves a document that renders as unstyled
 # pandoc output; without this it would be published silently.
-python embed_quarto_deps.py --check "${DOC}_standalone.html" || exit 1
-python validate_tutorial_html.py "${DOC}_standalone.html" --standalone || exit 1
+python embed_quarto_deps.py --check "${DOC}_standalone.html" \
+  || { restore_previous; exit 1; }
+python validate_tutorial_html.py "${DOC}_standalone.html" --standalone \
+  || { restore_previous; exit 1; }
 
 mv "${DOC}_standalone.html" "$DOC.html"
+rm -f "$DOC.html.prev"
 ls -la "$DOC.html"
 echo "---PUBLISHED: $DOC.html at $(date)---"

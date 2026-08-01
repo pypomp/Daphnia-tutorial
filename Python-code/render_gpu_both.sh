@@ -8,8 +8,13 @@
 # card. Running them in sequence inside a single allocation is the safe way to
 # get both documents from one submission.
 #
-#   DAPHNIA_RUN_LEVEL=2 ./render_gpu_both.sh
+#   ./render_gpu_both.sh 3            # run level as an argument, preferred
 #   DAPHNIA_RUN_LEVEL=3 ./render_gpu_both.sh
+#
+# Prefer the argument for batch submission. A batch job does not reliably
+# inherit the submitting shell's environment, and if DAPHNIA_RUN_LEVEL were
+# dropped this would quietly fall back to level 2 and burn the allocation on
+# the wrong run.
 #
 # Each document goes through the full chain in render_gpu.sh: quarto render,
 # make_standalone_html.py to inline the figures, embed_quarto_deps.py to attach
@@ -21,7 +26,7 @@
 # allocation is already paid for. The exit status reports whether both
 # succeeded.
 
-LEVEL="${DAPHNIA_RUN_LEVEL:-2}"
+LEVEL="${1:-${DAPHNIA_RUN_LEVEL:-2}}"
 WRAPPER="./render_gpu_level${LEVEL}.sh"
 DOCS="daphnia_tut_pypomp daphnia_tut_pypomp_advanced"
 
@@ -64,7 +69,14 @@ for DOC in $DOCS; do
   # partial render carries no link#quarto-bootstrap. Done with grep so the
   # summary does not depend on the conda environment the wrappers activate.
   if [ -f "$DOC.html" ] && grep -q 'id="quarto-bootstrap"' "$DOC.html"; then
-    printf '  %-34s published  %s\n' "$DOC.html" "$(du -h "$DOC.html" | cut -f1)"
+    size=$(du -h "$DOC.html" | cut -f1)
+    # A document can be in place because this run produced it, or because the
+    # run failed and render_gpu.sh restored the previous one. Saying which
+    # matters: the second is a stale document, not a new result.
+    case " $failed " in
+      *" $DOC "*) printf '  %-34s unchanged, previous kept  %s\n' "$DOC.html" "$size" ;;
+      *)          printf '  %-34s published                 %s\n' "$DOC.html" "$size" ;;
+    esac
   else
     printf '  %-34s NOT PUBLISHED\n' "$DOC.html"
   fi

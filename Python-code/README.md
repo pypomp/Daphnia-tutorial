@@ -7,13 +7,19 @@ models; they differ in how closely they follow the R version.
 | Source | Rendered | What it is |
 |---|---|---|
 | `daphnia_tut_pypomp.qmd` | [`daphnia_tut_pypomp.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_pypomp.html) | A direct port of [`R-code/tut.qmd`](https://pypomp.github.io/Daphnia-tutorial/R-code/tut.html): the same sections, the same starting values, the same algorithmic settings, the same analyses and figures. |
-| `daphnia_tut_pypomp_advanced.qmd` | — | An advanced version that does *not* replicate the R tutorial. It adds numerical validation gates, profile screening, a CPU/GPU section and per-section timings. |
+| `daphnia_tut_pypomp_advanced.qmd` | [`daphnia_tut_pypomp_advanced.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_pypomp_advanced.html) — **work in progress** | An advanced version that does *not* replicate the R tutorial. It adds numerical validation gates, profile screening, a CPU/GPU section and per-section timings. |
 
 > **Status.** `daphnia_tut_pypomp.html` is a complete run-level-3 render and
-> passes the release validator. The advanced tutorial has no published document:
-> its last render predates the current revision of its own source and was
-> missing every MCAP figure, so it was withdrawn rather than corrected. Read
-> `daphnia_tut_pypomp_advanced.qmd` until a fresh render lands.
+> passes the release validator: self-contained, every figure embedded, all
+> checks green.
+>
+> `daphnia_tut_pypomp_advanced.html` is **work in progress and is not a
+> manuscript reproduction.** It is a genuine run-level-3 render, but four of its
+> own numerical gates fail — manuscript-likelihood, matched-target agreement,
+> multi-start convergence and profile validation — and they have failed at both
+> run level 2 and run level 3, so the shortfall is not a matter of compute
+> budget. It is published to show the workflow and the diagnostics, not to
+> report a validated result. Quote nothing from it as a reproduction.
 
 ### Files needed to reproduce `daphnia_tut_pypomp`
 
@@ -38,10 +44,21 @@ dependencies, and gates on them), `smoke_test.py` (pre-flight check) and
 
 ### Prerequisites
 
-The tutorials pin an exact Pypomp revision. They require Pypomp 0.4.6.0 at commit
+Both tutorials were produced with Pypomp 0.4.6.0 at commit
 `ed95e3bd46c1cc188fc8f7d83e89c6d5035b977c`, and the released PyPI package is not
-a substitute: the notebook reads the git HEAD of whatever `import pypomp`
-resolves to and stops with an error if it is not that revision.
+a substitute.
+
+Only `daphnia_tut_pypomp_advanced.qmd` *enforces* this. It reads the git HEAD of
+whatever `import pypomp` resolves to and stops with a `RuntimeError` if it is not
+that revision. `daphnia_tut_pypomp.qmd` has no such guard, because the R tutorial
+it replicates has none — so it will run against any Pypomp you give it and
+quietly produce numbers from that version instead. Check the revision yourself
+before trusting a render of it:
+
+```bash
+git -C ~/git/pypomp rev-parse HEAD    # want ed95e3bd46c1cc188fc8f7d83e89c6d5035b977c
+python -c "import pypomp; print(pypomp.__file__, pypomp.__version__)"
+```
 
 ```bash
 git clone https://github.com/pypomp/pypomp.git ~/git/pypomp
@@ -136,11 +153,17 @@ DAPHNIA_DOC=daphnia_tut_pypomp_advanced ./render_gpu_level2.sh
 
 ### Rendering both tutorials
 
-`render_gpu_both.sh` renders both, one after the other, in a single allocation:
+`render_gpu_both.sh` renders both, one after the other, in a single allocation.
+Give it the run level as an argument:
 
 ```bash
-DAPHNIA_RUN_LEVEL=2 ./render_gpu_both.sh
+./render_gpu_both.sh 2      # the level R publishes
+./render_gpu_both.sh 3      # production
 ```
+
+`DAPHNIA_RUN_LEVEL=3 ./render_gpu_both.sh` also works, but prefer the argument
+for batch submission: a batch job does not reliably inherit the submitting
+shell's environment, and a dropped variable would quietly fall back to level 2.
 
 Do not submit the two documents as concurrent jobs. `DENO_DIR`, `TMPDIR` and
 Quarto's `.quarto/` directory are per-user rather than per-job, and each level
@@ -151,7 +174,37 @@ contend for the card. Sequential rendering is what makes one submission safe.
 Each document goes through the full chain, so anything that lands in place is
 self-contained and correctly styled. The second is attempted even if the first
 fails — the allocation is already paid for — and the closing summary lists each
-document as published or not.
+document as `published`, `unchanged, previous kept` (the run failed and the
+previous document was restored) or `NOT PUBLISHED`.
+
+### Running interactively on a chosen GPU
+
+None of the scripts sets `CUDA_VISIBLE_DEVICES`, so whatever you export is
+inherited all the way down to JAX. On a node you hold yourself, pick the free
+device from `nvidia-smi` and run under `tmux` so the job survives a dropped
+connection:
+
+```bash
+nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv
+
+conda activate py313
+cd ~/git/Daphnia-tutorial/Python-code
+
+tmux new -d -s daphnia \
+  "CUDA_VISIBLE_DEVICES=0 ./render_gpu_both.sh 3 > render_level3.log 2>&1"
+tmux attach -t daphnia          # detach again with ctrl-b d
+tail -f render.log              # or just watch the log
+```
+
+One document on one device:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 DAPHNIA_DOC=daphnia_tut_pypomp_advanced ./render_gpu_level3.sh
+```
+
+Both documents at once on *different* devices is the one thing to avoid: they
+would share `DENO_DIR`, `TMPDIR` and `.quarto/` regardless of which GPU each
+used, and each level wrapper clears the Deno cache as it starts.
 
 ### Checking a change before a long run
 
