@@ -2515,7 +2515,7 @@ code span.kw {
 </section>
 <section id="introduction" class="level2">
 <h2>Introduction</h2>
-<p>Ecological experiments often yield panel time series data, wherein multiple trajectories are observed across replicated experimental units. These replicates may exhibit correlation through shared parameters governing the underlying stochastic processes. This tutorial demonstrates the construction, estimation, and validation of mechanistic models for panel data using the partially observed Markov process (POMP) framework, in the Python package <a href="https://github.com/pypomp"><code>pypomp</code></a>. It is a direct translation of the <a href="https://pypomp.github.io/Daphnia-tutorial/R-code/tut.html">R version</a>, which uses <code>panelPomp</code>; the models, starting values, algorithmic settings and analyses are the same.</p>
+<p>Ecological experiments often yield panel time series data, wherein multiple trajectories are observed across replicated experimental units. These replicates may exhibit correlation through shared parameters governing the underlying stochastic processes. This tutorial demonstrates the construction, estimation, and validation of mechanistic models for panel data using the partially observed Markov process (POMP) framework, in the Python package <a href="https://github.com/pypomp"><code>pypomp</code></a>.</p>
 <p>We analyze panel time series data from a controlled mesocosm experiment examining the population dynamics of two freshwater zooplankton species (<em>Daphnia dentifera</em> and <em>D. lumholtzi</em>), an algal food source (<em>Ankistrodesmus falcatus</em>), and a fungal parasite historically identified as <em>Metschnikowia bicuspidata</em> and subsequently described as <em>Australozyma monospora</em> <span class="citation" data-cites="lachance25">(<a href="#ref-lachance25" role="doc-biblioref">Lachance et al. 2025</a>)</span>. The experiment, conducted by <span class="citation" data-cites="searle16">Searle et al. (<a href="#ref-searle16" role="doc-biblioref">2016</a>)</span>, was designed to investigate how interspecific competition between the native <em>D. dentifera</em> and invasive <em>D. lumholtzi</em> is modified by their different susceptibility to the parasite.</p>
 <p>The panel iterated filter (PIF) algorithm <span class="citation" data-cites="breto20">(<a href="#ref-breto20" role="doc-biblioref">Bretó, Ionides, and King 2020</a>)</span> enables plug-and-play likelihood-based inference for general PanelPOMP models. We employ both standard PIF and its marginalized variant, MPIF, to maximize likelihood functions. Profile likelihood confidence intervals are constructed using the Monte Carlo Adjusted Profile (MCAP) method <span class="citation" data-cites="ionides17 ning21">(<a href="#ref-ionides17" role="doc-biblioref">Ionides et al. 2017</a>; <a href="#ref-ning21" role="doc-biblioref">Ning, Ionides, and Ritov 2021</a>)</span> to account for Monte Carlo uncertainty in likelihood evaluations. General PanelPOMP notation and algorithmic details are provided in Section S2 of the Supplement.</p>
 <p>We also evaluate competing model specifications using Akaike’s Information Criterion, <span class="math inline">\(\text{AIC} = 2p - 2\ell(\hat{\theta})\)</span>, where <span class="math inline">\(p\)</span> is the number of estimated parameters and <span class="math inline">\(\ell(\hat{\theta})\)</span> is the maximized log-likelihood <span class="citation" data-cites="aic74">(<a href="#ref-aic74" role="doc-biblioref">Akaike 1974</a>)</span>.</p>
@@ -2693,13 +2693,13 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 <span id="cb2-47"><a href="#cb2-47" aria-hidden="true" tabindex="-1"></a>    Jn_new <span class="op">=</span> Jn <span class="op">+</span> Jn_term</span>
 <span id="cb2-48"><a href="#cb2-48" aria-hidden="true" tabindex="-1"></a>    F_new  <span class="op">=</span> F  <span class="op">+</span> F_term</span>
 <span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Boundary rule, matching tut.qmd:336-349 (clamp to nearest bound).</span></span>
+<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Boundary rule: clamp to the nearest bound.</span></span>
 <span id="cb2-51"><a href="#cb2-51" aria-hidden="true" tabindex="-1"></a>    Sn_violated <span class="op">=</span> (Sn_new <span class="op">&lt;</span> <span class="fl">0.0</span>) <span class="op">|</span> (Sn_new <span class="op">&gt;</span> <span class="fl">1e5</span>)</span>
 <span id="cb2-52"><a href="#cb2-52" aria-hidden="true" tabindex="-1"></a>    Jn_violated <span class="op">=</span> (Jn_new <span class="op">&lt;</span> <span class="fl">0.0</span>) <span class="op">|</span> (Jn_new <span class="op">&gt;</span> <span class="fl">1e5</span>)</span>
 <span id="cb2-53"><a href="#cb2-53" aria-hidden="true" tabindex="-1"></a>    F_violated  <span class="op">=</span> (F_new  <span class="op">&lt;</span> <span class="fl">0.0</span>) <span class="op">|</span> (F_new  <span class="op">&gt;</span> <span class="fl">1e20</span>)</span>
 <span id="cb2-54"><a href="#cb2-54" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-55"><a href="#cb2-55" aria-hidden="true" tabindex="-1"></a>    <span class="co"># R clamps to the nearest violated boundary:</span></span>
-<span id="cb2-56"><a href="#cb2-56" aria-hidden="true" tabindex="-1"></a>    <span class="co">#   Sn = (Sn &lt; 0.0) ? 0.0 : 1e5;</span></span>
+<span id="cb2-55"><a href="#cb2-55" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Clamp to whichever boundary was violated:</span></span>
+<span id="cb2-56"><a href="#cb2-56" aria-hidden="true" tabindex="-1"></a>    <span class="co">#   Sn = (Sn &lt; 0.0) ? 0.0 : 1e5</span></span>
 <span id="cb2-57"><a href="#cb2-57" aria-hidden="true" tabindex="-1"></a>    Sn_new <span class="op">=</span> jnp.where(Sn_violated, jnp.where(Sn_new <span class="op">&lt;</span> <span class="fl">0.0</span>, <span class="fl">0.0</span>, <span class="fl">1e5</span>),  Sn_new)</span>
 <span id="cb2-58"><a href="#cb2-58" aria-hidden="true" tabindex="-1"></a>    Jn_new <span class="op">=</span> jnp.where(Jn_violated, jnp.where(Jn_new <span class="op">&lt;</span> <span class="fl">0.0</span>, <span class="fl">0.0</span>, <span class="fl">1e5</span>),  Jn_new)</span>
 <span id="cb2-59"><a href="#cb2-59" aria-hidden="true" tabindex="-1"></a>    F_new  <span class="op">=</span> jnp.where(F_violated,  jnp.where(F_new  <span class="op">&lt;</span> <span class="fl">0.0</span>, <span class="fl">0.0</span>, <span class="fl">1e20</span>), F_new)</span>
@@ -2806,8 +2806,8 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 </details>
 </div>
 <div id="srjf-params-and-construction" class="cell" data-execution_count="8">
-<div class="sourceCode" id="cb7"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: parameters, tut.qmd:472-481. Seeds the unit objects and, at tut.qmd:722,</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="co"># the starting values of the unit-specific MPIF search.</span></span>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Seeds the unit objects, and the starting values of the unit-specific</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="co"># MPIF search below.</span></span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>parameters <span class="op">=</span> {</span>
 <span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;rn&quot;</span>:       <span class="fl">2.121818e+02</span>,</span>
 <span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;f_Sn&quot;</span>:     <span class="fl">4.271306e-04</span>,</span>
@@ -2840,39 +2840,38 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 </div>
 </div>
 <div id="srjf-panelpomp-construction" class="cell" data-execution_count="9">
-<div class="sourceCode" id="cb9"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: shared_parameter, tut.qmd:524-533.</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>shared_parameter <span class="op">=</span> {</span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;rn&quot;</span>:       <span class="fl">1.535539e+03</span>,</span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;f_Sn&quot;</span>:     <span class="fl">1.306857e-04</span>,</span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;theta_Sn&quot;</span>: <span class="fl">6.353239e-01</span>,</span>
-<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;theta_Jn&quot;</span>: <span class="fl">1.376217e-03</span>,</span>
-<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigSn&quot;</span>:    <span class="fl">0.000000e+00</span>,</span>
-<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigJn&quot;</span>:    <span class="fl">3.018772e-01</span>,</span>
-<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigF&quot;</span>:     <span class="fl">8.658726e-07</span>,</span>
-<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;k_Sn&quot;</span>:     <span class="fl">1.417860e+01</span>,</span>
-<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>}</span>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>shared_parameter <span class="op">=</span> {</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;rn&quot;</span>:       <span class="fl">1.535539e+03</span>,</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;f_Sn&quot;</span>:     <span class="fl">1.306857e-04</span>,</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;theta_Sn&quot;</span>: <span class="fl">6.353239e-01</span>,</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;theta_Jn&quot;</span>: <span class="fl">1.376217e-03</span>,</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigSn&quot;</span>:    <span class="fl">0.000000e+00</span>,</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigJn&quot;</span>:    <span class="fl">3.018772e-01</span>,</span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigF&quot;</span>:     <span class="fl">8.658726e-07</span>,</span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;k_Sn&quot;</span>:     <span class="fl">1.417860e+01</span>,</span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> shared_theta(d):</span>
-<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a>    <span class="co">&quot;&quot;&quot;All-shared PanelParameters payload. The unit block is an empty frame</span></span>
-<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a><span class="co">    whose columns carry the unit names, which is where Pypomp reads them.&quot;&quot;&quot;</span></span>
-<span id="cb9-17"><a href="#cb9-17" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {</span>
-<span id="cb9-18"><a href="#cb9-18" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;shared&quot;</span>: pd.DataFrame({<span class="st">&quot;shared&quot;</span>: [d[k] <span class="cf">for</span> k <span class="kw">in</span> SRJF_PARAMS]},</span>
-<span id="cb9-19"><a href="#cb9-19" aria-hidden="true" tabindex="-1"></a>                               index<span class="op">=</span>SRJF_PARAMS),</span>
-<span id="cb9-20"><a href="#cb9-20" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;unit_specific&quot;</span>: pd.DataFrame(index<span class="op">=</span>[], columns<span class="op">=</span>unit_names),</span>
-<span id="cb9-21"><a href="#cb9-21" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> shared_theta(d):</span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>    <span class="co">&quot;&quot;&quot;All-shared PanelParameters payload. The unit block is an empty frame</span></span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a><span class="co">    whose columns carry the unit names, which is where Pypomp reads them.&quot;&quot;&quot;</span></span>
+<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {</span>
+<span id="cb9-17"><a href="#cb9-17" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;shared&quot;</span>: pd.DataFrame({<span class="st">&quot;shared&quot;</span>: [d[k] <span class="cf">for</span> k <span class="kw">in</span> SRJF_PARAMS]},</span>
+<span id="cb9-18"><a href="#cb9-18" aria-hidden="true" tabindex="-1"></a>                               index<span class="op">=</span>SRJF_PARAMS),</span>
+<span id="cb9-19"><a href="#cb9-19" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;unit_specific&quot;</span>: pd.DataFrame(index<span class="op">=</span>[], columns<span class="op">=</span>unit_names),</span>
+<span id="cb9-20"><a href="#cb9-20" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb9-21"><a href="#cb9-21" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb9-22"><a href="#cb9-22" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-23"><a href="#cb9-23" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-24"><a href="#cb9-24" aria-hidden="true" tabindex="-1"></a>panelfood <span class="op">=</span> pp.PanelPomp(Pomp_dict<span class="op">=</span>srjf_pomp_dict,</span>
-<span id="cb9-25"><a href="#cb9-25" aria-hidden="true" tabindex="-1"></a>                         theta<span class="op">=</span>pp.PanelParameters(shared_theta(shared_parameter)))</span>
-<span id="cb9-26"><a href="#cb9-26" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">&quot;Shared parameters:&quot;</span>, panelfood.canonical_shared_param_names)</span></code></pre></div>
+<span id="cb9-23"><a href="#cb9-23" aria-hidden="true" tabindex="-1"></a>panelfood <span class="op">=</span> pp.PanelPomp(Pomp_dict<span class="op">=</span>srjf_pomp_dict,</span>
+<span id="cb9-24"><a href="#cb9-24" aria-hidden="true" tabindex="-1"></a>                         theta<span class="op">=</span>pp.PanelParameters(shared_theta(shared_parameter)))</span>
+<span id="cb9-25"><a href="#cb9-25" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">&quot;Shared parameters:&quot;</span>, panelfood.canonical_shared_param_names)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>Shared parameters: [&#39;rn&#39;, &#39;f_Sn&#39;, &#39;theta_Sn&#39;, &#39;theta_Jn&#39;, &#39;sigSn&#39;, &#39;sigJn&#39;, &#39;sigF&#39;, &#39;k_Sn&#39;]</code></pre>
 </div>
 </div>
 <div id="srjf-misscaled" class="cell" data-execution_count="10">
-<div class="sourceCode" id="cb11"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: shared_parameter_wrong, tut.qmd:547-556. Seven parameters corrupted by</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="co"># factors of 1e2 to 1e14; theta_Sn and sigSn are left unchanged.</span></span>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Seven parameters deliberately corrupted by factors of 1e2 to 1e14;</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="co"># theta_Sn and sigSn are left unchanged.</span></span>
 <span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>shared_parameter_wrong <span class="op">=</span> {</span>
 <span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;rn&quot;</span>:       <span class="fl">1.535539e-03</span>,</span>
 <span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;f_Sn&quot;</span>:     <span class="fl">1.306857e+04</span>,</span>
@@ -2897,8 +2896,8 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 <h4>Parameter Estimation via Panel Iterated Filtering</h4>
 <p>The <code>run_level</code> parameter controls computational intensity. Level 1 provides rapid prototyping, level 2 is the setting used for this document, and level 3 delivers production-quality estimates.</p>
 <div id="srjf-algorithmic-params" class="cell" data-execution_count="11">
-<div class="sourceCode" id="cb13"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: algorithmic.params, tut.qmd:585-590. Np -&gt; evaluation particles,</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Mp -&gt; MIF particles, Np_rep -&gt; evaluation replicates.</span></span>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Np -&gt; evaluation particles, Mp -&gt; MIF particles,</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Np_rep -&gt; evaluation replicates.</span></span>
 <span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>algorithmic_params <span class="op">=</span> {</span>
 <span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Np&quot;</span>:     [<span class="dv">50</span>,  <span class="dv">600</span>, <span class="dv">1000</span>],</span>
 <span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Np_rep&quot;</span>: [ <span class="dv">2</span>,   <span class="dv">10</span>,   <span class="dv">20</span>],</span>
@@ -2916,11 +2915,11 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 </div>
 <p>The random walk standard deviation controls the magnitude of parameter perturbations during iterated filtering. We employ a uniform perturbation intensity across all parameters:</p>
 <div id="srjf-perturbation" class="cell" data-execution_count="12">
-<div class="sourceCode" id="cb15"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>dent_rw_sd <span class="op">=</span> <span class="fl">0.02</span>                       <span class="co"># R: dent_rw.sd, tut.qmd:601</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>n_searches <span class="op">=</span> <span class="dv">10</span> <span class="op">*</span> N_WORKERS             <span class="co"># R: 10L * getDoParWorkers(), tut.qmd:603</span></span>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>dent_rw_sd <span class="op">=</span> <span class="fl">0.02</span>                       <span class="co"># random-walk sd for the search</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>n_searches <span class="op">=</span> <span class="dv">10</span> <span class="op">*</span> N_WORKERS             <span class="co"># ten independent searches per worker</span></span>
 <span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="co"># R: tut.qmd:604-621. Every candidate is dispersed log-uniformly over</span></span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="co"># [theta/3, theta*3]; the undispersed vector is not retained as a start.</span></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Every candidate is dispersed log-uniformly over [theta/3, theta*3]; the</span></span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="co"># undispersed vector is not retained as a start.</span></span>
 <span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>rng <span class="op">=</span> np.random.default_rng(<span class="dv">20260723</span>)</span>
 <span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a></span>
@@ -2938,26 +2937,26 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 <span id="cb15-20"><a href="#cb15-20" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb15-21"><a href="#cb15-21" aria-hidden="true" tabindex="-1"></a>parameter_candidates <span class="op">=</span> disperse(shared_parameter, n_searches)</span>
 <span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a><span class="co"># R: rw_sd(...) lists all eight parameters at dent_rw.sd. sigSn is zero in</span></span>
-<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a><span class="co"># value, so a log-scale perturbation leaves it at zero either way.</span></span>
+<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a><span class="co"># All eight parameters perturb at dent_rw_sd. sigSn is zero in value, so a</span></span>
+<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a><span class="co"># log-scale perturbation leaves it at zero either way.</span></span>
 <span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a>srjf_rw_sigmas <span class="op">=</span> {k: dent_rw_sd <span class="cf">for</span> k <span class="kw">in</span> SRJF_PARAMS}</span>
 <span id="cb15-26"><a href="#cb15-26" aria-hidden="true" tabindex="-1"></a>srjf_rw_sigmas[<span class="st">&quot;sigSn&quot;</span>] <span class="op">=</span> <span class="fl">0.0</span></span>
 <span id="cb15-27"><a href="#cb15-27" aria-hidden="true" tabindex="-1"></a>srjf_rw_sd <span class="op">=</span> pp.RWSigma(sigmas<span class="op">=</span>srjf_rw_sigmas,</span>
 <span id="cb15-28"><a href="#cb15-28" aria-hidden="true" tabindex="-1"></a>                        init_names<span class="op">=</span>[]).geometric_cooling(<span class="fl">0.7</span>)</span>
-<span id="cb15-29"><a href="#cb15-29" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;</span><span class="sc">{</span>n_searches<span class="sc">}</span><span class="ss"> independent searches, rw.sd = </span><span class="sc">{</span>dent_rw_sd<span class="sc">}</span><span class="ss">&quot;</span>)</span></code></pre></div>
+<span id="cb15-29"><a href="#cb15-29" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;</span><span class="sc">{</span>n_searches<span class="sc">}</span><span class="ss"> independent searches, rw_sd = </span><span class="sc">{</span>dent_rw_sd<span class="sc">}</span><span class="ss">&quot;</span>)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
-<pre><code>360 independent searches, rw.sd = 0.02</code></pre>
+<pre><code>360 independent searches, rw_sd = 0.02</code></pre>
 </div>
 </div>
 <div id="srjf-mif-search" class="cell" data-execution_count="13">
-<div class="sourceCode" id="cb17"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: tut.qmd:628-676. Pypomp advances all starts in one vectorised call.</span></span>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Pypomp advances all starts in one vectorised call.</span></span>
 <span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>ll_all_shared, se_all_shared, theta_all_shared, traces_all_shared <span class="op">=</span> run_searches(</span>
 <span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    [shared_theta(c) <span class="cf">for</span> c <span class="kw">in</span> parameter_candidates],</span>
 <span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>    srjf_rw_sd, Mp, Nmif, Np, Np_rep, key0<span class="op">=</span><span class="dv">101</span>,</span>
 <span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a><span class="co"># R computes no best run here: `mf` is reassigned by the unit-specific search</span></span>
-<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a><span class="co"># in the next chunk before `best` is taken (tut.qmd:675 then 794).</span></span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a><span class="co"># No best run is taken here: `mf` is reassigned by the unit-specific search</span></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a><span class="co"># in the next chunk, before `best` is used.</span></span>
 <span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a>mf <span class="op">=</span> {<span class="st">&quot;ll&quot;</span>: ll_all_shared, <span class="st">&quot;se&quot;</span>: se_all_shared,</span>
 <span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a>      <span class="st">&quot;theta&quot;</span>: theta_all_shared, <span class="st">&quot;traces&quot;</span>: traces_all_shared}</span>
 <span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;All-shared searches complete: best logLik &quot;</span></span>
@@ -2968,8 +2967,8 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 </div>
 <p>The unit-specific parameterization partitions the parameter vector into a shared component and a unit-specific component. Because this model contains unit-specific parameters, <code>block=True</code> selects marginalized panel iterated filtering (MPIF).</p>
 <div id="srjf-uspec-mpif" class="cell" data-execution_count="14">
-<div class="sourceCode" id="cb19"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: tut.qmd:692-801. Starting values come from `parameters`, not from the</span></span>
-<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="co"># all-shared search result.</span></span>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Starting values come from `parameters`, not from the all-shared search</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="co"># result.</span></span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>specific_names <span class="op">=</span> [<span class="st">&quot;theta_Sn&quot;</span>]</span>
 <span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>shared_names_uspec <span class="op">=</span> [k <span class="cf">for</span> k <span class="kw">in</span> SRJF_PARAMS <span class="cf">if</span> k <span class="kw">not</span> <span class="kw">in</span> specific_names]</span>
 <span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a>shared_parameter_uspec <span class="op">=</span> {k: parameters[k] <span class="cf">for</span> k <span class="kw">in</span> shared_names_uspec}</span>
@@ -2987,16 +2986,16 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 <span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a>    }</span>
 <span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="co"># R overwrites `panelfood` here (tut.qmd:727) with the unit-specific object,</span></span>
-<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a><span class="co"># and Diagnostic 1 below filters it. R&#39;s mif2() returns a new object and leaves</span></span>
-<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a><span class="co"># this one at its STARTING values, so it must not be reassigned to a fitted</span></span>
-<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a><span class="co"># panel afterwards. One parameter set, as in R.</span></span>
+<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="co"># `panelfood` is replaced here by the unit-specific object, which Diagnostic 1</span></span>
+<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a><span class="co"># below filters. Fitting returns a new object and leaves this one at its</span></span>
+<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a><span class="co"># STARTING values, so it must not be reassigned to a fitted panel afterwards.</span></span>
+<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a><span class="co"># One parameter set throughout.</span></span>
 <span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a>panelfood <span class="op">=</span> pp.PanelPomp(</span>
 <span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a>    Pomp_dict<span class="op">=</span>srjf_pomp_dict,</span>
 <span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a>    theta<span class="op">=</span>pp.PanelParameters(uspec_theta(shared_parameter_uspec, specific_mat)),</span>
 <span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb19-28"><a href="#cb19-28" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-29"><a href="#cb19-29" aria-hidden="true" tabindex="-1"></a><span class="co"># R: rw.sd omits sigSn entirely for the unit-specific search (tut.qmd:773-780).</span></span>
+<span id="cb19-29"><a href="#cb19-29" aria-hidden="true" tabindex="-1"></a><span class="co"># sigSn is omitted from the random walk entirely for the unit-specific search.</span></span>
 <span id="cb19-30"><a href="#cb19-30" aria-hidden="true" tabindex="-1"></a>uspec_rw_sigmas <span class="op">=</span> {k: dent_rw_sd <span class="cf">for</span> k <span class="kw">in</span> SRJF_PARAMS}</span>
 <span id="cb19-31"><a href="#cb19-31" aria-hidden="true" tabindex="-1"></a>uspec_rw_sigmas[<span class="st">&quot;sigSn&quot;</span>] <span class="op">=</span> <span class="fl">0.0</span></span>
 <span id="cb19-32"><a href="#cb19-32" aria-hidden="true" tabindex="-1"></a>uspec_rw_sd <span class="op">=</span> pp.RWSigma(sigmas<span class="op">=</span>uspec_rw_sigmas,</span>
@@ -3017,7 +3016,7 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 <span id="cb19-47"><a href="#cb19-47" aria-hidden="true" tabindex="-1"></a>    t_u[<span class="st">&quot;theta_idx&quot;</span>] <span class="op">=</span> t_u[<span class="st">&quot;theta_idx&quot;</span>] <span class="op">+</span> i</span>
 <span id="cb19-48"><a href="#cb19-48" aria-hidden="true" tabindex="-1"></a>    traces_uspec.append(t_u)</span>
 <span id="cb19-49"><a href="#cb19-49" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-50"><a href="#cb19-50" aria-hidden="true" tabindex="-1"></a><span class="co"># R: mf is reassigned, then best/mif.estimate are taken from it (tut.qmd:794-800).</span></span>
+<span id="cb19-50"><a href="#cb19-50" aria-hidden="true" tabindex="-1"></a><span class="co"># `mf` is reassigned here; `best` and the estimate are then taken from it.</span></span>
 <span id="cb19-51"><a href="#cb19-51" aria-hidden="true" tabindex="-1"></a>mf <span class="op">=</span> {<span class="st">&quot;ll&quot;</span>: np.array(ll_uspec), <span class="st">&quot;se&quot;</span>: np.array(se_uspec),</span>
 <span id="cb19-52"><a href="#cb19-52" aria-hidden="true" tabindex="-1"></a>      <span class="st">&quot;theta&quot;</span>: theta_uspec, <span class="st">&quot;traces&quot;</span>: pd.concat(traces_uspec, ignore_index<span class="op">=</span><span class="va">True</span>)}</span>
 <span id="cb19-53"><a href="#cb19-53" aria-hidden="true" tabindex="-1"></a>best <span class="op">=</span> <span class="bu">int</span>(np.nanargmax(mf[<span class="st">&quot;ll&quot;</span>]))</span>
@@ -3035,7 +3034,7 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 <h4>Diagnostic 1: Parameter Scaling Verification</h4>
 <p>To demonstrate the numerical pathologies induced by parameter mis-specification, we compare particle filter performance between the correctly scaled <code>panelfood</code> object and the deliberately corrupted <code>panelfood_wrong</code> object.</p>
 <div id="srjf-scaling-diagnostic" class="cell" data-execution_count="15">
-<div class="sourceCode" id="cb21"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: tut.qmd:823-899. Both filters use Np and Np_rep from algorithmic.params.</span></span>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Both filters use Np and Np_rep from algorithmic_params.</span></span>
 <span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>panelfood.pfilter(J<span class="op">=</span>Np, reps<span class="op">=</span>Np_rep, key<span class="op">=</span>jax.random.key(<span class="dv">505</span>))</span>
 <span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>unit_ll_correct <span class="op">=</span> np.asarray(</span>
 <span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>    panelfood.results_history[<span class="op">-</span><span class="dv">1</span>].logLiks.values)[<span class="dv">0</span>]     <span class="co"># (units, reps)</span></span>
@@ -3043,7 +3042,7 @@ Figure 1: Observed population densities for adult (top panel) and juvenile (bot
 <span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a>unit_ll_wrong <span class="op">=</span> np.asarray(</span>
 <span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a>    panelfood_wrong.results_history[<span class="op">-</span><span class="dv">1</span>].logLiks.values)[<span class="dv">0</span>]</span>
 <span id="cb21-8"><a href="#cb21-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb21-9"><a href="#cb21-9" aria-hidden="true" tabindex="-1"></a><span class="co"># R aggregates arithmetically: mean(ll_vec), sd(ll_vec)/sqrt(n).</span></span>
+<span id="cb21-9"><a href="#cb21-9" aria-hidden="true" tabindex="-1"></a><span class="co"># Aggregated arithmetically: mean(ll_vec), sd(ll_vec)/sqrt(n).</span></span>
 <span id="cb21-10"><a href="#cb21-10" aria-hidden="true" tabindex="-1"></a>ll_correct_vec <span class="op">=</span> unit_ll_correct.<span class="bu">sum</span>(axis<span class="op">=</span><span class="dv">0</span>)</span>
 <span id="cb21-11"><a href="#cb21-11" aria-hidden="true" tabindex="-1"></a>ll_wrong_vec <span class="op">=</span> unit_ll_wrong.<span class="bu">sum</span>(axis<span class="op">=</span><span class="dv">0</span>)</span>
 <span id="cb21-12"><a href="#cb21-12" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">&quot;Well-scaled parameters:&quot;</span>)</span>
@@ -3065,7 +3064,7 @@ Log-likelihood difference: 14280.54</code></pre>
 </div>
 </div>
 <div id="cell-fig-srjf-scaling-unit-comparison" class="cell" data-fig-height="4" data-fig-width="10" data-execution_count="16">
-<div class="sourceCode" id="cb23"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: tut.qmd:902-976. Connected markers, arithmetic rowMeans, -Inf relocated.</span></span>
+<div class="sourceCode" id="cb23"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Connected markers, arithmetic row means, -Inf relocated.</span></span>
 <span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>fig, axes <span class="op">=</span> plt.subplots(<span class="dv">1</span>, <span class="dv">2</span>, figsize<span class="op">=</span>(<span class="dv">10</span>, <span class="dv">4</span>))</span>
 <span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>unit_means_correct <span class="op">=</span> unit_ll_correct.mean(axis<span class="op">=</span><span class="dv">1</span>)</span>
 <span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a>unit_means_wrong <span class="op">=</span> unit_ll_wrong.mean(axis<span class="op">=</span><span class="dv">1</span>)</span>
@@ -3112,7 +3111,7 @@ Figure 2: Unit-level log-likelihood contributions under correctly scaled (left)
 <h4>Diagnostic 2: Evidence for Unit-Specific Parameterization</h4>
 <p><a href="#fig-srjf-unit-likelihood-decomposition" class="quarto-xref">Figure 3</a> shows whether substantial heterogeneity in unit-level log-likelihoods under the all-shared model indicates that a single parameter vector inadequately describes all units:</p>
 <div id="cell-fig-srjf-unit-likelihood-decomposition" class="cell" data-fig-height="4" data-fig-width="8" data-execution_count="17">
-<div class="sourceCode" id="cb24"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: tut.qmd:984-1022. Arithmetic means, normalized axis, points + segments.</span></span>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Arithmetic means, normalised axis, points and segments.</span></span>
 <span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>unit_ll_means <span class="op">=</span> unit_ll_correct.mean(axis<span class="op">=</span><span class="dv">1</span>)</span>
 <span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>unit_ll_ses <span class="op">=</span> unit_ll_correct.std(axis<span class="op">=</span><span class="dv">1</span>, ddof<span class="op">=</span><span class="dv">1</span>) <span class="op">/</span> np.sqrt(Np_rep)</span>
 <span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a>normalized <span class="op">=</span> unit_ll_means <span class="op">-</span> unit_ll_means.mean()</span>
@@ -3140,31 +3139,30 @@ Figure 3: Unit-level log-likelihood contributions under all-shared parameteriza
 </div>
 </div>
 <div id="srjf-aic-comparison" class="cell" data-execution_count="18">
-<div class="sourceCode" id="cb25"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: tut.qmd:1024-1141.</span></span>
-<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>p_shared <span class="op">=</span> <span class="bu">len</span>(shared_parameter)                                    <span class="co"># 8</span></span>
-<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>aic_shared <span class="op">=</span> <span class="dv">2</span> <span class="op">*</span> p_shared <span class="op">-</span> <span class="dv">2</span> <span class="op">*</span> pf_loglik_of_mif_estimate</span>
-<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a><span class="co"># R runs a second unit-specific search here and omits `block`, so panelPomp&#39;s</span></span>
-<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a><span class="co"># default block = FALSE applies: this comparison uses standard PIF.</span></span>
-<span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>ll_specific_all, se_specific_all, _, _ <span class="op">=</span> run_searches(</span>
-<span id="cb25-8"><a href="#cb25-8" aria-hidden="true" tabindex="-1"></a>    [uspec_theta(shared_parameter_uspec, specific_mat)] <span class="op">*</span> (<span class="dv">2</span> <span class="op">*</span> N_WORKERS),</span>
-<span id="cb25-9"><a href="#cb25-9" aria-hidden="true" tabindex="-1"></a>    uspec_rw_sd, Mp, Nmif, Np, Np_rep, key0<span class="op">=</span><span class="dv">707</span>,</span>
-<span id="cb25-10"><a href="#cb25-10" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb25-11"><a href="#cb25-11" aria-hidden="true" tabindex="-1"></a>best_specific <span class="op">=</span> <span class="bu">int</span>(np.nanargmax(ll_specific_all))</span>
-<span id="cb25-12"><a href="#cb25-12" aria-hidden="true" tabindex="-1"></a>ll_specific <span class="op">=</span> <span class="bu">float</span>(ll_specific_all[best_specific])</span>
-<span id="cb25-13"><a href="#cb25-13" aria-hidden="true" tabindex="-1"></a>se_specific <span class="op">=</span> <span class="bu">float</span>(se_specific_all[best_specific])</span>
-<span id="cb25-14"><a href="#cb25-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb25-15"><a href="#cb25-15" aria-hidden="true" tabindex="-1"></a>p_specific <span class="op">=</span> <span class="bu">len</span>(shared_parameter_uspec) <span class="op">+</span> specific_mat.size            <span class="co"># 7 + 10</span></span>
-<span id="cb25-16"><a href="#cb25-16" aria-hidden="true" tabindex="-1"></a>aic_specific <span class="op">=</span> <span class="dv">2</span> <span class="op">*</span> p_specific <span class="op">-</span> <span class="dv">2</span> <span class="op">*</span> ll_specific</span>
-<span id="cb25-17"><a href="#cb25-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb25-18"><a href="#cb25-18" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  All-shared:    p = </span><span class="sc">{</span>p_shared<span class="sc">:2d}</span><span class="ss">, logLik = &quot;</span></span>
-<span id="cb25-19"><a href="#cb25-19" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;</span><span class="sc">{</span>pf_loglik_of_mif_estimate<span class="sc">:9.2f}</span><span class="ss">, AIC = </span><span class="sc">{</span>aic_shared<span class="sc">:9.2f}</span><span class="ss">&quot;</span>)</span>
-<span id="cb25-20"><a href="#cb25-20" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  Unit-specific: p = </span><span class="sc">{</span>p_specific<span class="sc">:2d}</span><span class="ss">, logLik = </span><span class="sc">{</span>ll_specific<span class="sc">:9.2f}</span><span class="ss">, &quot;</span></span>
-<span id="cb25-21"><a href="#cb25-21" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;AIC = </span><span class="sc">{</span>aic_specific<span class="sc">:9.2f}</span><span class="ss">&quot;</span>)</span>
-<span id="cb25-22"><a href="#cb25-22" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  Delta AIC: </span><span class="sc">{</span>aic_specific <span class="op">-</span> aic_shared<span class="sc">:.2f}</span><span class="ss">&quot;</span>)</span>
-<span id="cb25-23"><a href="#cb25-23" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  Likelihood improvement: </span><span class="sc">{</span>ll_specific <span class="op">-</span> pf_loglik_of_mif_estimate<span class="sc">:.2f}</span><span class="ss">&quot;</span>)</span>
-<span id="cb25-24"><a href="#cb25-24" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  Improvement in SE units: &quot;</span></span>
-<span id="cb25-25"><a href="#cb25-25" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;</span><span class="sc">{</span>(ll_specific <span class="op">-</span> pf_loglik_of_mif_estimate) <span class="op">/</span> np<span class="sc">.</span>sqrt(se_specific<span class="op">**</span><span class="dv">2</span> <span class="op">+</span> se_of_pf_loglik_of_mif_estimate<span class="op">**</span><span class="dv">2</span>)<span class="sc">:.2f}</span><span class="ss">&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>p_shared <span class="op">=</span> <span class="bu">len</span>(shared_parameter)                                    <span class="co"># 8</span></span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>aic_shared <span class="op">=</span> <span class="dv">2</span> <span class="op">*</span> p_shared <span class="op">-</span> <span class="dv">2</span> <span class="op">*</span> pf_loglik_of_mif_estimate</span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a><span class="co"># A second unit-specific search runs here without blocking, so this</span></span>
+<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a><span class="co"># comparison uses standard PIF.</span></span>
+<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a>ll_specific_all, se_specific_all, _, _ <span class="op">=</span> run_searches(</span>
+<span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>    [uspec_theta(shared_parameter_uspec, specific_mat)] <span class="op">*</span> (<span class="dv">2</span> <span class="op">*</span> N_WORKERS),</span>
+<span id="cb25-8"><a href="#cb25-8" aria-hidden="true" tabindex="-1"></a>    uspec_rw_sd, Mp, Nmif, Np, Np_rep, key0<span class="op">=</span><span class="dv">707</span>,</span>
+<span id="cb25-9"><a href="#cb25-9" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb25-10"><a href="#cb25-10" aria-hidden="true" tabindex="-1"></a>best_specific <span class="op">=</span> <span class="bu">int</span>(np.nanargmax(ll_specific_all))</span>
+<span id="cb25-11"><a href="#cb25-11" aria-hidden="true" tabindex="-1"></a>ll_specific <span class="op">=</span> <span class="bu">float</span>(ll_specific_all[best_specific])</span>
+<span id="cb25-12"><a href="#cb25-12" aria-hidden="true" tabindex="-1"></a>se_specific <span class="op">=</span> <span class="bu">float</span>(se_specific_all[best_specific])</span>
+<span id="cb25-13"><a href="#cb25-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-14"><a href="#cb25-14" aria-hidden="true" tabindex="-1"></a>p_specific <span class="op">=</span> <span class="bu">len</span>(shared_parameter_uspec) <span class="op">+</span> specific_mat.size            <span class="co"># 7 + 10</span></span>
+<span id="cb25-15"><a href="#cb25-15" aria-hidden="true" tabindex="-1"></a>aic_specific <span class="op">=</span> <span class="dv">2</span> <span class="op">*</span> p_specific <span class="op">-</span> <span class="dv">2</span> <span class="op">*</span> ll_specific</span>
+<span id="cb25-16"><a href="#cb25-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-17"><a href="#cb25-17" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  All-shared:    p = </span><span class="sc">{</span>p_shared<span class="sc">:2d}</span><span class="ss">, logLik = &quot;</span></span>
+<span id="cb25-18"><a href="#cb25-18" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;</span><span class="sc">{</span>pf_loglik_of_mif_estimate<span class="sc">:9.2f}</span><span class="ss">, AIC = </span><span class="sc">{</span>aic_shared<span class="sc">:9.2f}</span><span class="ss">&quot;</span>)</span>
+<span id="cb25-19"><a href="#cb25-19" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  Unit-specific: p = </span><span class="sc">{</span>p_specific<span class="sc">:2d}</span><span class="ss">, logLik = </span><span class="sc">{</span>ll_specific<span class="sc">:9.2f}</span><span class="ss">, &quot;</span></span>
+<span id="cb25-20"><a href="#cb25-20" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;AIC = </span><span class="sc">{</span>aic_specific<span class="sc">:9.2f}</span><span class="ss">&quot;</span>)</span>
+<span id="cb25-21"><a href="#cb25-21" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  Delta AIC: </span><span class="sc">{</span>aic_specific <span class="op">-</span> aic_shared<span class="sc">:.2f}</span><span class="ss">&quot;</span>)</span>
+<span id="cb25-22"><a href="#cb25-22" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  Likelihood improvement: </span><span class="sc">{</span>ll_specific <span class="op">-</span> pf_loglik_of_mif_estimate<span class="sc">:.2f}</span><span class="ss">&quot;</span>)</span>
+<span id="cb25-23"><a href="#cb25-23" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  Improvement in SE units: &quot;</span></span>
+<span id="cb25-24"><a href="#cb25-24" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;</span><span class="sc">{</span>(ll_specific <span class="op">-</span> pf_loglik_of_mif_estimate) <span class="op">/</span> np<span class="sc">.</span>sqrt(se_specific<span class="op">**</span><span class="dv">2</span> <span class="op">+</span> se_of_pf_loglik_of_mif_estimate<span class="op">**</span><span class="dv">2</span>)<span class="sc">:.2f}</span><span class="ss">&quot;</span>)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>  All-shared:    p =  8, logLik =   -490.07, AIC =    996.14
   Unit-specific: p = 17, logLik =   -490.45, AIC =   1014.91
@@ -3178,7 +3176,7 @@ Figure 3: Unit-level log-likelihood contributions under all-shared parameteriza
 <h4>Diagnostic 3: MIF searches visualization</h4>
 <p>Convergence traces from the independent searches are plotted against iteration number.</p>
 <div id="cell-fig-srjf-mif-convergence" class="cell" data-fig-height="5" data-fig-width="8" data-execution_count="19">
-<div class="sourceCode" id="cb27"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: tut.qmd:1155-1198. Traces come from `mf`, i.e. the unit-specific search.</span></span>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Traces come from `mf`, that is, from the unit-specific search.</span></span>
 <span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>tr <span class="op">=</span> mf[<span class="st">&quot;traces&quot;</span>]</span>
 <span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>tr <span class="op">=</span> tr[(tr[<span class="st">&quot;unit&quot;</span>] <span class="op">==</span> <span class="st">&quot;shared&quot;</span>) <span class="op">&amp;</span> (tr[<span class="st">&quot;method&quot;</span>] <span class="op">==</span> <span class="st">&quot;mif&quot;</span>)]</span>
 <span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a>tr <span class="op">=</span> tr[np.isfinite(tr[<span class="st">&quot;logLik&quot;</span>])]</span>
@@ -3186,8 +3184,8 @@ Figure 3: Unit-level log-likelihood contributions under all-shared parameteriza
 <span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">5</span>))</span>
 <span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>cmap <span class="op">=</span> plt.get_cmap(<span class="st">&quot;turbo&quot;</span>)</span>
 <span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a>idx <span class="op">=</span> <span class="bu">sorted</span>(tr[<span class="st">&quot;theta_idx&quot;</span>].unique())</span>
-<span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a><span class="co"># R seeds with mf[[best]] and then loops from i = 2, so run 1 is dropped and</span></span>
-<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a><span class="co"># the best run appears twice.</span></span>
+<span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a><span class="co"># The set is seeded with the best run and then looped from index 2, so run 1</span></span>
+<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a><span class="co"># is dropped and the best run appears twice.</span></span>
 <span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a>best_trace <span class="op">=</span> best <span class="cf">if</span> best <span class="kw">in</span> idx <span class="cf">else</span> idx[<span class="dv">0</span>]</span>
 <span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a>plot_order <span class="op">=</span> [best_trace] <span class="op">+</span> [j <span class="cf">for</span> j <span class="kw">in</span> idx <span class="cf">if</span> j <span class="op">!=</span> idx[<span class="dv">0</span>]]</span>
 <span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> n, j <span class="kw">in</span> <span class="bu">enumerate</span>(plot_order):</span>
@@ -3216,35 +3214,34 @@ Figure 4: MIF log-likelihood traces across independent searches.
 <p>Monte Carlo Adjusted Profile (MCAP) methods provide confidence intervals for situations where the likelihood is evaluated and maximized by Monte Carlo algorithms. A smoothed estimate of the profile likelihood is used to reduce Monte Carlo error, quantify this error, and adjust the confidence intervals accordingly to maintain their coverage.</p>
 <p>The following code demonstrates an example about running MCAP analysis on parameter <span class="math inline">\(\theta_{S_n}\)</span>.</p>
 <div id="cell-fig-mcap-theta-sn" class="cell" data-fig-height="4.5" data-fig-width="7" data-execution_count="21">
-<div class="sourceCode" id="cb28"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: shared_parameter, tut.qmd:1222-1231 -- a distinct vector from the one</span></span>
-<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="co"># used for estimation above.</span></span>
-<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>shared_parameter_mcap <span class="op">=</span> {</span>
-<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigF&quot;</span>:     <span class="fl">1.116997e-05</span>,</span>
-<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigSn&quot;</span>:    <span class="fl">0.000000e+00</span>,</span>
-<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;f_Sn&quot;</span>:     <span class="fl">3.116171e-04</span>,</span>
-<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;rn&quot;</span>:       <span class="fl">3.369070e+02</span>,</span>
-<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;k_Sn&quot;</span>:     <span class="fl">6.257932e+01</span>,</span>
-<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigJn&quot;</span>:    <span class="fl">3.073612e-01</span>,</span>
-<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;theta_Sn&quot;</span>: <span class="fl">2.436524e-01</span>,</span>
-<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;theta_Jn&quot;</span>: <span class="fl">3.093602e-03</span>,</span>
-<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a>}</span>
-<span id="cb28-13"><a href="#cb28-13" aria-hidden="true" tabindex="-1"></a>shared_parameter_mcap <span class="op">=</span> {k: shared_parameter_mcap[k] <span class="cf">for</span> k <span class="kw">in</span> SRJF_PARAMS}</span>
-<span id="cb28-14"><a href="#cb28-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb28-15"><a href="#cb28-15" aria-hidden="true" tabindex="-1"></a>nprof_sn <span class="op">=</span> <span class="dv">20</span>                                       <span class="co"># R: tut.qmd:1278</span></span>
-<span id="cb28-16"><a href="#cb28-16" aria-hidden="true" tabindex="-1"></a>_, subset_data_theta_Sn <span class="op">=</span> run_profile(<span class="st">&quot;theta_Sn&quot;</span>, nprof_sn,</span>
-<span id="cb28-17"><a href="#cb28-17" aria-hidden="true" tabindex="-1"></a>                                      shared_parameter_mcap, seed<span class="op">=</span><span class="dv">1000</span>)</span>
-<span id="cb28-18"><a href="#cb28-18" aria-hidden="true" tabindex="-1"></a>mcap_object_theta_Sn <span class="op">=</span> pp.mcap(</span>
-<span id="cb28-19"><a href="#cb28-19" aria-hidden="true" tabindex="-1"></a>    parameter<span class="op">=</span>subset_data_theta_Sn[<span class="st">&quot;log_theta_Sn&quot;</span>].to_numpy(),</span>
-<span id="cb28-20"><a href="#cb28-20" aria-hidden="true" tabindex="-1"></a>    loglik<span class="op">=</span>subset_data_theta_Sn[<span class="st">&quot;loglik&quot;</span>].to_numpy(),</span>
-<span id="cb28-21"><a href="#cb28-21" aria-hidden="true" tabindex="-1"></a>    level<span class="op">=</span><span class="fl">0.95</span>, span<span class="op">=</span><span class="fl">0.6</span>, n_grid<span class="op">=</span><span class="dv">1000</span>,              <span class="co"># R: tut.qmd:1363-1364</span></span>
-<span id="cb28-22"><a href="#cb28-22" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb28-23"><a href="#cb28-23" aria-hidden="true" tabindex="-1"></a>theta_Sn_mle <span class="op">=</span> mcap_object_theta_Sn.mle</span>
-<span id="cb28-24"><a href="#cb28-24" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;MCAP theta_Sn: MLE(log) = </span><span class="sc">{</span>theta_Sn_mle<span class="sc">:.4f}</span><span class="ss"> -&gt; &quot;</span></span>
-<span id="cb28-25"><a href="#cb28-25" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;</span><span class="sc">{</span>np<span class="sc">.</span>exp(theta_Sn_mle)<span class="sc">:.4g}</span><span class="ss">&quot;</span>)</span>
-<span id="cb28-26"><a href="#cb28-26" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  95% CI (log): [</span><span class="sc">{</span>mcap_object_theta_Sn<span class="sc">.</span>ci[<span class="dv">0</span>]<span class="sc">}</span><span class="ss">, &quot;</span></span>
-<span id="cb28-27"><a href="#cb28-27" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;</span><span class="sc">{</span>mcap_object_theta_Sn<span class="sc">.</span>ci[<span class="dv">1</span>]<span class="sc">}</span><span class="ss">]&quot;</span>)</span>
-<span id="cb28-28"><a href="#cb28-28" aria-hidden="true" tabindex="-1"></a>mcap_plot(subset_data_theta_Sn, <span class="st">&quot;theta_Sn&quot;</span>, mcap_object_theta_Sn,</span>
-<span id="cb28-29"><a href="#cb28-29" aria-hidden="true" tabindex="-1"></a>          <span class="vs">r&quot;</span><span class="dv">$</span><span class="er">\</span><span class="vs">log</span><span class="kw">(</span><span class="ch">\t</span><span class="vs">heta</span><span class="dv">^</span><span class="vs">n_{S}</span><span class="kw">)</span><span class="dv">$</span><span class="vs">&quot;</span>, <span class="st">&quot;&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># A distinct starting vector from the one used for estimation above.</span></span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>shared_parameter_mcap <span class="op">=</span> {</span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigF&quot;</span>:     <span class="fl">1.116997e-05</span>,</span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigSn&quot;</span>:    <span class="fl">0.000000e+00</span>,</span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;f_Sn&quot;</span>:     <span class="fl">3.116171e-04</span>,</span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;rn&quot;</span>:       <span class="fl">3.369070e+02</span>,</span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;k_Sn&quot;</span>:     <span class="fl">6.257932e+01</span>,</span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;sigJn&quot;</span>:    <span class="fl">3.073612e-01</span>,</span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;theta_Sn&quot;</span>: <span class="fl">2.436524e-01</span>,</span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;theta_Jn&quot;</span>: <span class="fl">3.093602e-03</span>,</span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a>shared_parameter_mcap <span class="op">=</span> {k: shared_parameter_mcap[k] <span class="cf">for</span> k <span class="kw">in</span> SRJF_PARAMS}</span>
+<span id="cb28-13"><a href="#cb28-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-14"><a href="#cb28-14" aria-hidden="true" tabindex="-1"></a>nprof_sn <span class="op">=</span> <span class="dv">20</span></span>
+<span id="cb28-15"><a href="#cb28-15" aria-hidden="true" tabindex="-1"></a>_, subset_data_theta_Sn <span class="op">=</span> run_profile(<span class="st">&quot;theta_Sn&quot;</span>, nprof_sn,</span>
+<span id="cb28-16"><a href="#cb28-16" aria-hidden="true" tabindex="-1"></a>                                      shared_parameter_mcap, seed<span class="op">=</span><span class="dv">1000</span>)</span>
+<span id="cb28-17"><a href="#cb28-17" aria-hidden="true" tabindex="-1"></a>mcap_object_theta_Sn <span class="op">=</span> pp.mcap(</span>
+<span id="cb28-18"><a href="#cb28-18" aria-hidden="true" tabindex="-1"></a>    parameter<span class="op">=</span>subset_data_theta_Sn[<span class="st">&quot;log_theta_Sn&quot;</span>].to_numpy(),</span>
+<span id="cb28-19"><a href="#cb28-19" aria-hidden="true" tabindex="-1"></a>    loglik<span class="op">=</span>subset_data_theta_Sn[<span class="st">&quot;loglik&quot;</span>].to_numpy(),</span>
+<span id="cb28-20"><a href="#cb28-20" aria-hidden="true" tabindex="-1"></a>    level<span class="op">=</span><span class="fl">0.95</span>, span<span class="op">=</span><span class="fl">0.6</span>, n_grid<span class="op">=</span><span class="dv">1000</span>,</span>
+<span id="cb28-21"><a href="#cb28-21" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb28-22"><a href="#cb28-22" aria-hidden="true" tabindex="-1"></a>theta_Sn_mle <span class="op">=</span> mcap_object_theta_Sn.mle</span>
+<span id="cb28-23"><a href="#cb28-23" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;MCAP theta_Sn: MLE(log) = </span><span class="sc">{</span>theta_Sn_mle<span class="sc">:.4f}</span><span class="ss"> -&gt; &quot;</span></span>
+<span id="cb28-24"><a href="#cb28-24" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;</span><span class="sc">{</span>np<span class="sc">.</span>exp(theta_Sn_mle)<span class="sc">:.4g}</span><span class="ss">&quot;</span>)</span>
+<span id="cb28-25"><a href="#cb28-25" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  95% CI (log): [</span><span class="sc">{</span>mcap_object_theta_Sn<span class="sc">.</span>ci[<span class="dv">0</span>]<span class="sc">}</span><span class="ss">, &quot;</span></span>
+<span id="cb28-26"><a href="#cb28-26" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;</span><span class="sc">{</span>mcap_object_theta_Sn<span class="sc">.</span>ci[<span class="dv">1</span>]<span class="sc">}</span><span class="ss">]&quot;</span>)</span>
+<span id="cb28-27"><a href="#cb28-27" aria-hidden="true" tabindex="-1"></a>mcap_plot(subset_data_theta_Sn, <span class="st">&quot;theta_Sn&quot;</span>, mcap_object_theta_Sn,</span>
+<span id="cb28-28"><a href="#cb28-28" aria-hidden="true" tabindex="-1"></a>          <span class="vs">r&quot;</span><span class="dv">$</span><span class="er">\</span><span class="vs">log</span><span class="kw">(</span><span class="ch">\t</span><span class="vs">heta</span><span class="dv">^</span><span class="vs">n_{S}</span><span class="kw">)</span><span class="dv">$</span><span class="vs">&quot;</span>, <span class="st">&quot;&quot;</span>)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>theta_Sn: 400 evaluations, logLik range [-575.8, -498.8], max terminal k_Sn 625.4
 MCAP theta_Sn: MLE(log) = -0.1835 -&gt; 0.8323
@@ -3265,30 +3262,29 @@ Figure 5: MCAP profile for the adult mortality rate theta_Sn on the log scale. 
 </div>
 <p>However, MCAP analysis does not uniformly yield well-defined confidence intervals across all parameters. To illustrate this variability in inferential precision, we examine the profile for the juvenile mortality rate <span class="math inline">\(\theta_{J_n}\)</span>.</p>
 <div id="cell-fig-mcap-theta-jn" class="cell" data-fig-height="4.5" data-fig-width="7" data-execution_count="22">
-<div class="sourceCode" id="cb30"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>nprof_jn <span class="op">=</span> <span class="dv">50</span>                                       <span class="co"># R: tut.qmd:1409</span></span>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>nprof_jn <span class="op">=</span> <span class="dv">50</span></span>
 <span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>_, subset_data_theta_Jn <span class="op">=</span> run_profile(<span class="st">&quot;theta_Jn&quot;</span>, nprof_jn,</span>
 <span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>                                      shared_parameter_mcap, seed<span class="op">=</span><span class="dv">2000</span>)</span>
 <span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a><span class="co"># R thins to 51 bins and keeps the best point in each before calling mcap</span></span>
-<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a><span class="co"># (tut.qmd:1494-1511).</span></span>
-<span id="cb30-7"><a href="#cb30-7" aria-hidden="true" tabindex="-1"></a>edges <span class="op">=</span> np.linspace(subset_data_theta_Jn[<span class="st">&quot;log_theta_Jn&quot;</span>].<span class="bu">min</span>(),</span>
-<span id="cb30-8"><a href="#cb30-8" aria-hidden="true" tabindex="-1"></a>                    subset_data_theta_Jn[<span class="st">&quot;log_theta_Jn&quot;</span>].<span class="bu">max</span>(), <span class="dv">51</span>)</span>
-<span id="cb30-9"><a href="#cb30-9" aria-hidden="true" tabindex="-1"></a>binned <span class="op">=</span> subset_data_theta_Jn.assign(</span>
-<span id="cb30-10"><a href="#cb30-10" aria-hidden="true" tabindex="-1"></a>    _bin<span class="op">=</span>np.digitize(subset_data_theta_Jn[<span class="st">&quot;log_theta_Jn&quot;</span>], edges))</span>
-<span id="cb30-11"><a href="#cb30-11" aria-hidden="true" tabindex="-1"></a>subset_data_theta_Jn <span class="op">=</span> (binned.loc[binned.groupby(<span class="st">&quot;_bin&quot;</span>)[<span class="st">&quot;loglik&quot;</span>].idxmax()]</span>
-<span id="cb30-12"><a href="#cb30-12" aria-hidden="true" tabindex="-1"></a>                              .sort_values(<span class="st">&quot;log_theta_Jn&quot;</span>)</span>
-<span id="cb30-13"><a href="#cb30-13" aria-hidden="true" tabindex="-1"></a>                              .reset_index(drop<span class="op">=</span><span class="va">True</span>))</span>
-<span id="cb30-14"><a href="#cb30-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb30-15"><a href="#cb30-15" aria-hidden="true" tabindex="-1"></a>mcap_object_theta_Jn <span class="op">=</span> pp.mcap(</span>
-<span id="cb30-16"><a href="#cb30-16" aria-hidden="true" tabindex="-1"></a>    parameter<span class="op">=</span>subset_data_theta_Jn[<span class="st">&quot;log_theta_Jn&quot;</span>].to_numpy(),</span>
-<span id="cb30-17"><a href="#cb30-17" aria-hidden="true" tabindex="-1"></a>    loglik<span class="op">=</span>subset_data_theta_Jn[<span class="st">&quot;loglik&quot;</span>].to_numpy(),</span>
-<span id="cb30-18"><a href="#cb30-18" aria-hidden="true" tabindex="-1"></a>    level<span class="op">=</span><span class="fl">0.8</span>, span<span class="op">=</span><span class="fl">0.95</span>, n_grid<span class="op">=</span><span class="dv">1000</span>,              <span class="co"># R: tut.qmd:1514-1515</span></span>
-<span id="cb30-19"><a href="#cb30-19" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb30-20"><a href="#cb30-20" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;MCAP theta_Jn: MLE(log) = </span><span class="sc">{</span>mcap_object_theta_Jn<span class="sc">.</span>mle<span class="sc">:.4f}</span><span class="ss">&quot;</span>)</span>
-<span id="cb30-21"><a href="#cb30-21" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  80% CI (log): [</span><span class="sc">{</span>mcap_object_theta_Jn<span class="sc">.</span>ci[<span class="dv">0</span>]<span class="sc">}</span><span class="ss">, &quot;</span></span>
-<span id="cb30-22"><a href="#cb30-22" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;</span><span class="sc">{</span>mcap_object_theta_Jn<span class="sc">.</span>ci[<span class="dv">1</span>]<span class="sc">}</span><span class="ss">]&quot;</span>)</span>
-<span id="cb30-23"><a href="#cb30-23" aria-hidden="true" tabindex="-1"></a>mcap_plot(subset_data_theta_Jn, <span class="st">&quot;theta_Jn&quot;</span>, mcap_object_theta_Jn,</span>
-<span id="cb30-24"><a href="#cb30-24" aria-hidden="true" tabindex="-1"></a>          <span class="vs">r&quot;</span><span class="dv">$</span><span class="er">\</span><span class="vs">log</span><span class="kw">(</span><span class="ch">\t</span><span class="vs">heta</span><span class="dv">^</span><span class="vs">n_{J}</span><span class="kw">)</span><span class="dv">$</span><span class="vs">&quot;</span>, <span class="st">&quot;&quot;</span>)</span></code></pre></div>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Thin to 51 bins and keep the best point in each before calling mcap.</span></span>
+<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a>edges <span class="op">=</span> np.linspace(subset_data_theta_Jn[<span class="st">&quot;log_theta_Jn&quot;</span>].<span class="bu">min</span>(),</span>
+<span id="cb30-7"><a href="#cb30-7" aria-hidden="true" tabindex="-1"></a>                    subset_data_theta_Jn[<span class="st">&quot;log_theta_Jn&quot;</span>].<span class="bu">max</span>(), <span class="dv">51</span>)</span>
+<span id="cb30-8"><a href="#cb30-8" aria-hidden="true" tabindex="-1"></a>binned <span class="op">=</span> subset_data_theta_Jn.assign(</span>
+<span id="cb30-9"><a href="#cb30-9" aria-hidden="true" tabindex="-1"></a>    _bin<span class="op">=</span>np.digitize(subset_data_theta_Jn[<span class="st">&quot;log_theta_Jn&quot;</span>], edges))</span>
+<span id="cb30-10"><a href="#cb30-10" aria-hidden="true" tabindex="-1"></a>subset_data_theta_Jn <span class="op">=</span> (binned.loc[binned.groupby(<span class="st">&quot;_bin&quot;</span>)[<span class="st">&quot;loglik&quot;</span>].idxmax()]</span>
+<span id="cb30-11"><a href="#cb30-11" aria-hidden="true" tabindex="-1"></a>                              .sort_values(<span class="st">&quot;log_theta_Jn&quot;</span>)</span>
+<span id="cb30-12"><a href="#cb30-12" aria-hidden="true" tabindex="-1"></a>                              .reset_index(drop<span class="op">=</span><span class="va">True</span>))</span>
+<span id="cb30-13"><a href="#cb30-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-14"><a href="#cb30-14" aria-hidden="true" tabindex="-1"></a>mcap_object_theta_Jn <span class="op">=</span> pp.mcap(</span>
+<span id="cb30-15"><a href="#cb30-15" aria-hidden="true" tabindex="-1"></a>    parameter<span class="op">=</span>subset_data_theta_Jn[<span class="st">&quot;log_theta_Jn&quot;</span>].to_numpy(),</span>
+<span id="cb30-16"><a href="#cb30-16" aria-hidden="true" tabindex="-1"></a>    loglik<span class="op">=</span>subset_data_theta_Jn[<span class="st">&quot;loglik&quot;</span>].to_numpy(),</span>
+<span id="cb30-17"><a href="#cb30-17" aria-hidden="true" tabindex="-1"></a>    level<span class="op">=</span><span class="fl">0.8</span>, span<span class="op">=</span><span class="fl">0.95</span>, n_grid<span class="op">=</span><span class="dv">1000</span>,</span>
+<span id="cb30-18"><a href="#cb30-18" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb30-19"><a href="#cb30-19" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;MCAP theta_Jn: MLE(log) = </span><span class="sc">{</span>mcap_object_theta_Jn<span class="sc">.</span>mle<span class="sc">:.4f}</span><span class="ss">&quot;</span>)</span>
+<span id="cb30-20"><a href="#cb30-20" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="ss">f&quot;  80% CI (log): [</span><span class="sc">{</span>mcap_object_theta_Jn<span class="sc">.</span>ci[<span class="dv">0</span>]<span class="sc">}</span><span class="ss">, &quot;</span></span>
+<span id="cb30-21"><a href="#cb30-21" aria-hidden="true" tabindex="-1"></a>      <span class="ss">f&quot;</span><span class="sc">{</span>mcap_object_theta_Jn<span class="sc">.</span>ci[<span class="dv">1</span>]<span class="sc">}</span><span class="ss">]&quot;</span>)</span>
+<span id="cb30-22"><a href="#cb30-22" aria-hidden="true" tabindex="-1"></a>mcap_plot(subset_data_theta_Jn, <span class="st">&quot;theta_Jn&quot;</span>, mcap_object_theta_Jn,</span>
+<span id="cb30-23"><a href="#cb30-23" aria-hidden="true" tabindex="-1"></a>          <span class="vs">r&quot;</span><span class="dv">$</span><span class="er">\</span><span class="vs">log</span><span class="kw">(</span><span class="ch">\t</span><span class="vs">heta</span><span class="dv">^</span><span class="vs">n_{J}</span><span class="kw">)</span><span class="dv">$</span><span class="vs">&quot;</span>, <span class="st">&quot;&quot;</span>)</span></code></pre></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>theta_Jn: 2500 evaluations, logLik range [-582.4, -498.2], max terminal k_Sn 625.6
 MCAP theta_Jn: MLE(log) = -7.4034
@@ -3659,7 +3655,7 @@ Figure 7: The four adult observation streams used by the SIRJPF2 likelihood acr
 <div id="sirjpf-params-and-construction" class="cell" data-execution_count="29">
 <details class="code-fold">
 <summary>Code</summary>
-<div class="sourceCode" id="cb38"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Shared SIRJPF2 starting vector used by the R tutorial.</span></span>
+<div class="sourceCode" id="cb38"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Shared SIRJPF2 starting vector.</span></span>
 <span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>sirjpf_shared_theta <span class="op">=</span> {</span>
 <span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;ri&quot;</span>:       <span class="fl">1.307600e+04</span>,  <span class="st">&quot;rn&quot;</span>:       <span class="fl">5.904676e+01</span>,</span>
 <span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;f_Si&quot;</span>:     <span class="fl">1.838259e-05</span>,  <span class="st">&quot;f_Sn&quot;</span>:     <span class="fl">1.105668e-03</span>,</span>
@@ -3734,7 +3730,7 @@ Shared parameters: 26</code></pre>
 </div>
 </div>
 <div id="sirjpf-mif" class="cell" data-execution_count="30">
-<div class="sourceCode" id="cb40"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="co"># R: tut.qmd:1983-2062. Section 2 uses its own algorithmic settings.</span></span>
+<div class="sourceCode" id="cb40"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Section 2 uses its own algorithmic settings.</span></span>
 <span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a>algorithmic_params_sirjpf <span class="op">=</span> {</span>
 <span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Np&quot;</span>:     [<span class="dv">50</span>,  <span class="dv">500</span>, <span class="dv">1000</span>],</span>
 <span id="cb40-4"><a href="#cb40-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Np_rep&quot;</span>: [ <span class="dv">2</span>,   <span class="dv">10</span>,   <span class="dv">10</span>],</span>
@@ -3746,10 +3742,10 @@ Shared parameters: 26</code></pre>
 <span id="cb40-10"><a href="#cb40-10" aria-hidden="true" tabindex="-1"></a>Mp_s     <span class="op">=</span> algorithmic_params_sirjpf[<span class="st">&quot;Mp&quot;</span>][RL]</span>
 <span id="cb40-11"><a href="#cb40-11" aria-hidden="true" tabindex="-1"></a>Nmif_s   <span class="op">=</span> algorithmic_params_sirjpf[<span class="st">&quot;Nmif&quot;</span>][RL]</span>
 <span id="cb40-12"><a href="#cb40-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-13"><a href="#cb40-13" aria-hidden="true" tabindex="-1"></a>dent_rw_sd_sirjpf <span class="op">=</span> <span class="fl">0.05</span>                       <span class="co"># R: tut.qmd:1991</span></span>
-<span id="cb40-14"><a href="#cb40-14" aria-hidden="true" tabindex="-1"></a>n_searches_sirjpf <span class="op">=</span> <span class="dv">2</span> <span class="op">*</span> N_WORKERS              <span class="co"># R: 2 * getDoParWorkers()</span></span>
+<span id="cb40-13"><a href="#cb40-13" aria-hidden="true" tabindex="-1"></a>dent_rw_sd_sirjpf <span class="op">=</span> <span class="fl">0.05</span>                       <span class="co"># random-walk sd for Section 2</span></span>
+<span id="cb40-14"><a href="#cb40-14" aria-hidden="true" tabindex="-1"></a>n_searches_sirjpf <span class="op">=</span> <span class="dv">2</span> <span class="op">*</span> N_WORKERS              <span class="co"># two searches per worker</span></span>
 <span id="cb40-15"><a href="#cb40-15" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-16"><a href="#cb40-16" aria-hidden="true" tabindex="-1"></a><span class="co"># R replicates one identical start; the runs differ only through the RNG.</span></span>
+<span id="cb40-16"><a href="#cb40-16" aria-hidden="true" tabindex="-1"></a><span class="co"># One identical start is replicated; the runs differ only through the RNG.</span></span>
 <span id="cb40-17"><a href="#cb40-17" aria-hidden="true" tabindex="-1"></a>sirjpf_rw_sigmas <span class="op">=</span> {k: dent_rw_sd_sirjpf <span class="cf">for</span> k <span class="kw">in</span> sirjpf_shared_theta}</span>
 <span id="cb40-18"><a href="#cb40-18" aria-hidden="true" tabindex="-1"></a>sirjpf_rw_sigmas[<span class="st">&quot;sigSn&quot;</span>] <span class="op">=</span> <span class="fl">0.0</span></span>
 <span id="cb40-19"><a href="#cb40-19" aria-hidden="true" tabindex="-1"></a>sirjpf_rw_sigmas[<span class="st">&quot;sigSi&quot;</span>] <span class="op">=</span> <span class="fl">0.0</span></span>
