@@ -302,7 +302,7 @@ FONTS = {
 
 ```
 
-This tutorial is a Python-Pypomp translation of an [R-pomp tutorial](https://pypomp.github.io/Daphnia-tutorial/R-code/tut.html) guiding readers through implementation of the methodology presented by the article, *Mechanistic models for panel data: Analysis of ecological experiments with four interacting species*, <https://arxiv.org/abs/2506.04508>.
+This tutorial guides readers through implementation, using the Python package [`pypomp`](https://github.com/pypomp), of the methodology presented by the article, *Mechanistic models for panel data: Analysis of ecological experiments with four interacting species*, <https://arxiv.org/abs/2506.04508>.
 
 ### Status
 
@@ -712,7 +712,7 @@ Following the model selection analysis in Section S9 of the Supplement (Tables S
 #| label: srjf-params-and-construction
 #| code-fold: true
 
-# Shared SRJF starting vector used by the R tutorial.
+# Shared SRJF starting vector.
 srjf_shared_theta = {
     "rn":       1.535539e+03,
     "f_Sn":     1.306857e-04,
@@ -1431,7 +1431,7 @@ The interpretation of an MCAP result depends on the observed profile. A sharply 
 
 Pypomp's `pp.mcap(parameter, loglik, level=0.95, span=0.75)` accepts a one-dimensional grid of focal-parameter values and the corresponding profile log-likelihoods, and returns an `MCAPResult` with attributes `mle`, `ci`, `delta`, `se_stat`, `se_mc`, `se_total`, `quadratic_coef`, `quadratic_max`, `vcov`, and a `fit` dictionary holding the smoothed and quadratic-fit curves on a fine grid. There is no built-in profile-grid generator, so the profile design follows the R tutorial directly.
 
-The design is the one used by `R-code/tut.qmd`. For each focal parameter we take `nprof` values spaced logarithmically over a decade in each direction around the estimate, and at every focal value we start `nprof` independent MIF searches whose remaining free parameters are drawn log-uniformly across the same box, exactly as `pomp::profile_design(type = "runif")` does. The focal parameter is held fixed by setting its random-walk standard deviation to zero, every search is evaluated by a multi-replicate `pfilter`, and the profile point is the best of the searches at that focal value. This dispersed multi-start design is what keeps the profile away from the fixed $-150$ constraint penalty: a focal value whose starts are all clustered in one region can be trapped where the measurement model penalises every trajectory, whereas starts spread across the box will normally include a feasible one.
+For each focal parameter we take `nprof` values spaced logarithmically over a decade in each direction around the estimate, and at every focal value we start `nprof` independent MIF searches whose remaining free parameters are drawn log-uniformly across the same box, exactly as `pomp::profile_design(type = "runif")` does. The focal parameter is held fixed by setting its random-walk standard deviation to zero, every search is evaluated by a multi-replicate `pfilter`, and the profile point is the best of the searches at that focal value. This dispersed multi-start design is what keeps the profile away from the fixed $-150$ constraint penalty: a focal value whose starts are all clustered in one region can be trapped where the measurement model penalises every trajectory, whereas starts spread across the box will normally include a feasible one.
 
 At `run_level = 1`, the following calculations test execution only. Profile curves and intervals are suppressed. At levels 2 and 3, a figure is displayed only after its declared numerical gate passes. The raw tables report the focal value, likelihood, MCSE and unrestricted-likelihood gap before smoothing. The final gate also checks sensitivity to the smoothing span and to a coarser subset of the grid; a final scientific render should additionally be compared across run levels 2 and 3.
 
@@ -1583,14 +1583,14 @@ def _finite_argmax(values):
     return int(finite[np.argmax(values[finite])])
 
 
-# ---- Profile machinery, following R-code/tut.qmd -------------------------
+# ---- Profile machinery ---------------------------------------------------
 # R draws every profile start log-uniformly across the full parameter box and
 # keeps the best start at each focal value. That dispersed design, rather than
 # any screening of the output, is what keeps the R profile clear of the fixed
 # -150 constraint penalty.
 PROFILE_MCSE_LIMIT = max(5.0, 2.0 * best_ll_se)
-PROFILE_BOX_FACTOR = 10.0     # R: shared_ub = theta * 10; shared_lb = ub / 100
-PROFILE_RW_SD = 0.05          # R: generate_sd(x = 0.05)
+PROFILE_BOX_FACTOR = 10.0     # box is [theta / 10, theta * 10]
+PROFILE_RW_SD = 0.05          # random-walk sd for the profile searches
 PROFILE_BATCH = 50            # starts per mif call; R used one mif2 per row
 PROFILE_INFORMATIVE_DROP = 50.0
 PROFILE_IMPLAUSIBLE_GAIN = 10.0
@@ -1651,11 +1651,11 @@ def _profile_mask(ll_grid, unrestricted_loglik, label):
 
 
 def generate_parameter_profile(prof_name, nprof, seed):
-    """R: pomp::profile_design(type = "runif").
+    """Build a randomised profile design.
 
     `nprof` focal values spanning [theta/10, theta*10] on the log scale; at
     each, `nprof` starts with every other free parameter drawn log-uniformly
-    across the same box. sigSn is held at zero, as in the R tutorial.
+    across the same box. sigSn is held at zero.
     """
     rng = np.random.default_rng(seed)
     lb = {k: v / PROFILE_BOX_FACTOR for k, v in srjf_mle_theta.items()}
@@ -1739,7 +1739,7 @@ def run_profile(prof_name, nprof, seed):
 # Profile: theta_Sn --------------------------------------------------------
 name_str = "theta_Sn"
 focal_Sn = name_str
-nprof_Sn = 20          # R: generate_parameter_profile(name_str, 20)
+nprof_Sn = 20          # focal values, and starts per focal value
 
 final_params_Sn, subset_data_theta_Sn = cached(
     "srjf_profile_theta_Sn",
@@ -1761,7 +1761,7 @@ keep_Sn = _profile_mask(ll_grid_Sn, best_ll, "theta_Sn")
 
 mcap_Sn, mcap_Sn_warnings = _mcap_checked(
     parameter=log_grid_Sn[keep_Sn], loglik=ll_grid_Sn[keep_Sn],
-    span=0.6, level=0.95,          # R: span = 0.6, level = 0.95
+    span=0.6, level=0.95,
 )
 if mcap_Sn_warnings:
     print("  Captured MCAP numerical diagnostics:")
@@ -1958,7 +1958,7 @@ MCAP does not always yield well-defined confidence intervals: success depends on
 # Profile: theta_Jn --------------------------------------------------------
 name_str = "theta_Jn"
 focal_Jn = name_str
-nprof_Jn = 50          # R: generate_parameter_profile(name_str, 50)
+nprof_Jn = 50          # focal values, and starts per focal value
 
 final_params_Jn, subset_data_theta_Jn = cached(
     "srjf_profile_theta_Jn",
@@ -1980,7 +1980,7 @@ keep_Jn = _profile_mask(ll_grid_Jn, best_ll, "theta_Jn")
 
 mcap_Jn, mcap_Jn_warnings = _mcap_checked(
     parameter=log_grid_Jn[keep_Jn], loglik=ll_grid_Jn[keep_Jn],
-    span=0.95, level=0.8,          # R: span = 0.95, level = 0.8
+    span=0.95, level=0.8,
 )
 if mcap_Jn_warnings:
     print("  Captured MCAP numerical diagnostics:")
@@ -2579,7 +2579,7 @@ The shared starting parameter vector matches the R tutorial. We set $t_{0} = 1$,
 #| label: sirjpf-params-and-construction
 #| code-fold: true
 
-# Shared SIRJPF2 starting vector used by the R tutorial.
+# Shared SIRJPF2 starting vector.
 sirjpf_shared_theta = {
     "ri":       1.307600e+04,  "rn":       5.904676e+01,
     "f_Si":     1.838259e-05,  "f_Sn":     1.105668e-03,

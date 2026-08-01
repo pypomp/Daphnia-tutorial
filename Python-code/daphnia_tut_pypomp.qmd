@@ -47,8 +47,6 @@ affiliations:
 #| echo: false
 #| warning: false
 
-# Pypomp translation of R-code/tut.qmd. Every hard-coded parameter vector,
-# algorithmic setting and analysis step below is copied from that document.
 # The JAX backend must be chosen before jax is imported.
 import os
 
@@ -56,11 +54,11 @@ use_gpu = os.getenv("DAPHNIA_USE_GPU", "0") == "1"
 if not use_gpu:
     os.environ["JAX_PLATFORMS"] = "cpu"
 
-# pomp/panelPomp compute in double precision, and JAX defaults to single.
+# The particle filter needs double precision, and JAX defaults to single.
 # In float32 the negative-binomial term gammaln(y + k) - gammaln(k) cancels
 # catastrophically once k_Sn is large -- both terms reach ~1.7e9, which float32
 # cannot resolve -- and the error is positively biased, so taking the best of
-# many starts selects the corrupted evaluations. Matching R requires float64.
+# many starts selects the corrupted evaluations.
 os.environ["JAX_ENABLE_X64"] = "1"
 
 import numpy as np
@@ -75,11 +73,11 @@ if not jax.config.jax_enable_x64:
     raise RuntimeError("JAX_ENABLE_X64 must be set before jax is imported")
 from pathlib import Path
 
-# R registers 10 searches per parallel worker (tut.qmd:603). The worker count
-# is machine-dependent there; here it is an explicit setting.
+# Ten independent searches are run per worker. The worker count is an
+# explicit setting rather than a property of the machine.
 N_WORKERS = int(os.getenv("DAPHNIA_N_WORKERS", "36"))
 
-run_level = int(os.getenv("DAPHNIA_RUN_LEVEL", "2"))   # R: run_level = 2
+run_level = int(os.getenv("DAPHNIA_RUN_LEVEL", "2"))
 if run_level not in (1, 2, 3):
     raise ValueError("DAPHNIA_RUN_LEVEL must be 1, 2, or 3")
 
@@ -105,7 +103,7 @@ FONTS = {"axis_label": 11, "tick": 10, "panel_title": 11,
 
 
 def panel_logmeanexp(ll, se=False):
-    """R: panelPomp::panel_logmeanexp(x, MARGIN = 1, se = TRUE).
+    """Panel log-mean-exp with a standard error.
 
     Log-mean-exp within each unit, summed over units. `ll` has shape
     (units, replicates).
@@ -124,12 +122,12 @@ def summarise(arr):
     out = [panel_logmeanexp(arr[i], se=True) for i in range(arr.shape[0])]
     return (np.array([o[0] for o in out]), np.array([o[1] for o in out]))
 
-SEARCH_BATCH = 50   # starts per mif call; R issues one mif2 per search
+SEARCH_BATCH = 50   # starts per mif call; batching bounds peak GPU memory
 
 
 def run_searches(theta_payloads, rw, J, M, Np_, reps, key0):
-    """Run many independent searches in batches. R runs each search as its own
-    mif2 call under foreach; batching here only bounds peak GPU memory."""
+    """Run many independent searches in batches. The searches are independent;
+    batching only bounds peak GPU memory."""
     ll, se, thetas, traces = [], [], [], []
     for i in range(0, len(theta_payloads), SEARCH_BATCH):
         part = theta_payloads[i:i + SEARCH_BATCH]
@@ -155,7 +153,7 @@ This tutorial extends the peer-reviewed article but is not itself peer-reviewed.
 
 ## Introduction
 
-Ecological experiments often yield panel time series data, wherein multiple trajectories are observed across replicated experimental units. These replicates may exhibit correlation through shared parameters governing the underlying stochastic processes. This tutorial demonstrates the construction, estimation, and validation of mechanistic models for panel data using the partially observed Markov process (POMP) framework, in the Python package [`pypomp`](https://github.com/pypomp). It is a direct translation of the [R version](https://pypomp.github.io/Daphnia-tutorial/R-code/tut.html), which uses `panelPomp`; the models, starting values, algorithmic settings and analyses are the same.
+Ecological experiments often yield panel time series data, wherein multiple trajectories are observed across replicated experimental units. These replicates may exhibit correlation through shared parameters governing the underlying stochastic processes. This tutorial demonstrates the construction, estimation, and validation of mechanistic models for panel data using the partially observed Markov process (POMP) framework, in the Python package [`pypomp`](https://github.com/pypomp).
 
 We analyze panel time series data from a controlled mesocosm experiment examining the population dynamics of two freshwater zooplankton species (*Daphnia dentifera* and *D. lumholtzi*), an algal food source (*Ankistrodesmus falcatus*), and a fungal parasite historically identified as *Metschnikowia bicuspidata* and subsequently described as *Australozyma monospora* [@lachance25]. The experiment, conducted by @searle16, was designed to investigate how interspecific competition between the native *D. dentifera* and invasive *D. lumholtzi* is modified by their different susceptibility to the parasite.
 
@@ -332,13 +330,13 @@ def srjf_rproc(X_, theta_, key, covars, t, dt):
     Jn_new = Jn + Jn_term
     F_new  = F  + F_term
 
-    # Boundary rule, matching tut.qmd:336-349 (clamp to nearest bound).
+    # Boundary rule: clamp to the nearest bound.
     Sn_violated = (Sn_new < 0.0) | (Sn_new > 1e5)
     Jn_violated = (Jn_new < 0.0) | (Jn_new > 1e5)
     F_violated  = (F_new  < 0.0) | (F_new  > 1e20)
 
-    # R clamps to the nearest violated boundary:
-    #   Sn = (Sn < 0.0) ? 0.0 : 1e5;
+    # Clamp to whichever boundary was violated:
+    #   Sn = (Sn < 0.0) ? 0.0 : 1e5
     Sn_new = jnp.where(Sn_violated, jnp.where(Sn_new < 0.0, 0.0, 1e5),  Sn_new)
     Jn_new = jnp.where(Jn_violated, jnp.where(Jn_new < 0.0, 0.0, 1e5),  Jn_new)
     F_new  = jnp.where(F_violated,  jnp.where(F_new  < 0.0, 0.0, 1e20), F_new)
@@ -453,8 +451,8 @@ srjf_par_trans = pp.ParTrans(to_est=srjf_to_est, from_est=srjf_from_est)
 ```{python}
 #| label: srjf-params-and-construction
 
-# R: parameters, tut.qmd:472-481. Seeds the unit objects and, at tut.qmd:722,
-# the starting values of the unit-specific MPIF search.
+# Seeds the unit objects, and the starting values of the unit-specific
+# MPIF search below.
 parameters = {
     "rn":       2.121818e+02,
     "f_Sn":     4.271306e-04,
@@ -487,7 +485,6 @@ print(f"Constructed {len(srjf_pomp_dict)} SRJF unit objects")
 ```{python}
 #| label: srjf-panelpomp-construction
 
-# R: shared_parameter, tut.qmd:524-533.
 shared_parameter = {
     "rn":       1.535539e+03,
     "f_Sn":     1.306857e-04,
@@ -518,8 +515,8 @@ print("Shared parameters:", panelfood.canonical_shared_param_names)
 ```{python}
 #| label: srjf-misscaled
 
-# R: shared_parameter_wrong, tut.qmd:547-556. Seven parameters corrupted by
-# factors of 1e2 to 1e14; theta_Sn and sigSn are left unchanged.
+# Seven parameters deliberately corrupted by factors of 1e2 to 1e14;
+# theta_Sn and sigSn are left unchanged.
 shared_parameter_wrong = {
     "rn":       1.535539e-03,
     "f_Sn":     1.306857e+04,
@@ -544,8 +541,8 @@ The `run_level` parameter controls computational intensity. Level 1 provides rap
 ```{python}
 #| label: srjf-algorithmic-params
 
-# R: algorithmic.params, tut.qmd:585-590. Np -> evaluation particles,
-# Mp -> MIF particles, Np_rep -> evaluation replicates.
+# Np -> evaluation particles, Mp -> MIF particles,
+# Np_rep -> evaluation replicates.
 algorithmic_params = {
     "Np":     [50,  600, 1000],
     "Np_rep": [ 2,   10,   20],
@@ -564,11 +561,11 @@ The random walk standard deviation controls the magnitude of parameter perturbat
 ```{python}
 #| label: srjf-perturbation
 
-dent_rw_sd = 0.02                       # R: dent_rw.sd, tut.qmd:601
-n_searches = 10 * N_WORKERS             # R: 10L * getDoParWorkers(), tut.qmd:603
+dent_rw_sd = 0.02                       # random-walk sd for the search
+n_searches = 10 * N_WORKERS             # ten independent searches per worker
 
-# R: tut.qmd:604-621. Every candidate is dispersed log-uniformly over
-# [theta/3, theta*3]; the undispersed vector is not retained as a start.
+# Every candidate is dispersed log-uniformly over [theta/3, theta*3]; the
+# undispersed vector is not retained as a start.
 rng = np.random.default_rng(20260723)
 
 
@@ -586,26 +583,26 @@ def disperse(base, n):
 
 parameter_candidates = disperse(shared_parameter, n_searches)
 
-# R: rw_sd(...) lists all eight parameters at dent_rw.sd. sigSn is zero in
-# value, so a log-scale perturbation leaves it at zero either way.
+# All eight parameters perturb at dent_rw_sd. sigSn is zero in value, so a
+# log-scale perturbation leaves it at zero either way.
 srjf_rw_sigmas = {k: dent_rw_sd for k in SRJF_PARAMS}
 srjf_rw_sigmas["sigSn"] = 0.0
 srjf_rw_sd = pp.RWSigma(sigmas=srjf_rw_sigmas,
                         init_names=[]).geometric_cooling(0.7)
-print(f"{n_searches} independent searches, rw.sd = {dent_rw_sd}")
+print(f"{n_searches} independent searches, rw_sd = {dent_rw_sd}")
 ```
 
 ```{python}
 #| label: srjf-mif-search
 
-# R: tut.qmd:628-676. Pypomp advances all starts in one vectorised call.
+# Pypomp advances all starts in one vectorised call.
 ll_all_shared, se_all_shared, theta_all_shared, traces_all_shared = run_searches(
     [shared_theta(c) for c in parameter_candidates],
     srjf_rw_sd, Mp, Nmif, Np, Np_rep, key0=101,
 )
 
-# R computes no best run here: `mf` is reassigned by the unit-specific search
-# in the next chunk before `best` is taken (tut.qmd:675 then 794).
+# No best run is taken here: `mf` is reassigned by the unit-specific search
+# in the next chunk, before `best` is used.
 mf = {"ll": ll_all_shared, "se": se_all_shared,
       "theta": theta_all_shared, "traces": traces_all_shared}
 print(f"All-shared searches complete: best logLik "
@@ -617,8 +614,8 @@ The unit-specific parameterization partitions the parameter vector into a shared
 ```{python}
 #| label: srjf-uspec-mpif
 
-# R: tut.qmd:692-801. Starting values come from `parameters`, not from the
-# all-shared search result.
+# Starting values come from `parameters`, not from the all-shared search
+# result.
 specific_names = ["theta_Sn"]
 shared_names_uspec = [k for k in SRJF_PARAMS if k not in specific_names]
 shared_parameter_uspec = {k: parameters[k] for k in shared_names_uspec}
@@ -636,16 +633,16 @@ def uspec_theta(shared_d, spec_df):
     }
 
 
-# R overwrites `panelfood` here (tut.qmd:727) with the unit-specific object,
-# and Diagnostic 1 below filters it. R's mif2() returns a new object and leaves
-# this one at its STARTING values, so it must not be reassigned to a fitted
-# panel afterwards. One parameter set, as in R.
+# `panelfood` is replaced here by the unit-specific object, which Diagnostic 1
+# below filters. Fitting returns a new object and leaves this one at its
+# STARTING values, so it must not be reassigned to a fitted panel afterwards.
+# One parameter set throughout.
 panelfood = pp.PanelPomp(
     Pomp_dict=srjf_pomp_dict,
     theta=pp.PanelParameters(uspec_theta(shared_parameter_uspec, specific_mat)),
 )
 
-# R: rw.sd omits sigSn entirely for the unit-specific search (tut.qmd:773-780).
+# sigSn is omitted from the random walk entirely for the unit-specific search.
 uspec_rw_sigmas = {k: dent_rw_sd for k in SRJF_PARAMS}
 uspec_rw_sigmas["sigSn"] = 0.0
 uspec_rw_sd = pp.RWSigma(sigmas=uspec_rw_sigmas,
@@ -666,7 +663,7 @@ for i in range(0, n_searches, SEARCH_BATCH):
     t_u["theta_idx"] = t_u["theta_idx"] + i
     traces_uspec.append(t_u)
 
-# R: mf is reassigned, then best/mif.estimate are taken from it (tut.qmd:794-800).
+# `mf` is reassigned here; `best` and the estimate are then taken from it.
 mf = {"ll": np.array(ll_uspec), "se": np.array(se_uspec),
       "theta": theta_uspec, "traces": pd.concat(traces_uspec, ignore_index=True)}
 best = int(np.nanargmax(mf["ll"]))
@@ -684,7 +681,7 @@ To demonstrate the numerical pathologies induced by parameter mis-specification,
 ```{python}
 #| label: srjf-scaling-diagnostic
 
-# R: tut.qmd:823-899. Both filters use Np and Np_rep from algorithmic.params.
+# Both filters use Np and Np_rep from algorithmic_params.
 panelfood.pfilter(J=Np, reps=Np_rep, key=jax.random.key(505))
 unit_ll_correct = np.asarray(
     panelfood.results_history[-1].logLiks.values)[0]     # (units, reps)
@@ -692,7 +689,7 @@ panelfood_wrong.pfilter(J=Np, reps=Np_rep, key=jax.random.key(606))
 unit_ll_wrong = np.asarray(
     panelfood_wrong.results_history[-1].logLiks.values)[0]
 
-# R aggregates arithmetically: mean(ll_vec), sd(ll_vec)/sqrt(n).
+# Aggregated arithmetically: mean(ll_vec), sd(ll_vec)/sqrt(n).
 ll_correct_vec = unit_ll_correct.sum(axis=0)
 ll_wrong_vec = unit_ll_wrong.sum(axis=0)
 print("Well-scaled parameters:")
@@ -711,7 +708,7 @@ print(f"\nLog-likelihood difference: "
 #| fig-width: 10
 #| fig-height: 4
 
-# R: tut.qmd:902-976. Connected markers, arithmetic rowMeans, -Inf relocated.
+# Connected markers, arithmetic row means, -Inf relocated.
 fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 unit_means_correct = unit_ll_correct.mean(axis=1)
 unit_means_wrong = unit_ll_wrong.mean(axis=1)
@@ -752,7 +749,7 @@ fig.tight_layout()
 #| fig-width: 8
 #| fig-height: 4
 
-# R: tut.qmd:984-1022. Arithmetic means, normalized axis, points + segments.
+# Arithmetic means, normalised axis, points and segments.
 unit_ll_means = unit_ll_correct.mean(axis=1)
 unit_ll_ses = unit_ll_correct.std(axis=1, ddof=1) / np.sqrt(Np_rep)
 normalized = unit_ll_means - unit_ll_means.mean()
@@ -771,12 +768,11 @@ fig.tight_layout()
 ```{python}
 #| label: srjf-aic-comparison
 
-# R: tut.qmd:1024-1141.
 p_shared = len(shared_parameter)                                    # 8
 aic_shared = 2 * p_shared - 2 * pf_loglik_of_mif_estimate
 
-# R runs a second unit-specific search here and omits `block`, so panelPomp's
-# default block = FALSE applies: this comparison uses standard PIF.
+# A second unit-specific search runs here without blocking, so this
+# comparison uses standard PIF.
 ll_specific_all, se_specific_all, _, _ = run_searches(
     [uspec_theta(shared_parameter_uspec, specific_mat)] * (2 * N_WORKERS),
     uspec_rw_sd, Mp, Nmif, Np, Np_rep, key0=707,
@@ -808,7 +804,7 @@ Convergence traces from the independent searches are plotted against iteration n
 #| fig-width: 8
 #| fig-height: 5
 
-# R: tut.qmd:1155-1198. Traces come from `mf`, i.e. the unit-specific search.
+# Traces come from `mf`, that is, from the unit-specific search.
 tr = mf["traces"]
 tr = tr[(tr["unit"] == "shared") & (tr["method"] == "mif")]
 tr = tr[np.isfinite(tr["logLik"])]
@@ -816,8 +812,8 @@ tr = tr[np.isfinite(tr["logLik"])]
 fig, ax = plt.subplots(figsize=(8, 5))
 cmap = plt.get_cmap("turbo")
 idx = sorted(tr["theta_idx"].unique())
-# R seeds with mf[[best]] and then loops from i = 2, so run 1 is dropped and
-# the best run appears twice.
+# The set is seeded with the best run and then looped from index 2, so run 1
+# is dropped and the best run appears twice.
 best_trace = best if best in idx else idx[0]
 plot_order = [best_trace] + [j for j in idx if j != idx[0]]
 for n, j in enumerate(plot_order):
@@ -839,11 +835,10 @@ The following code demonstrates an example about running MCAP analysis on parame
 #| label: mcap-helpers
 #| echo: false
 
-# R: generate_parameter_profile / generate_sd, tut.qmd:1235-1276.
 def generate_parameter_profile(prof_name, nprof, base, seed):
-    """R: pomp::profile_design(type = "runif"). nprof focal values over
-    [theta/10, theta*10] on the log scale, each with nprof starts whose other
-    free parameters are drawn log-uniformly across the same box."""
+    """Build a profile design: nprof focal values over [theta/10, theta*10] on
+    the log scale, each with nprof starts whose other free parameters are drawn
+    log-uniformly across the same box."""
     r = np.random.default_rng(seed)
     ub = {k: v * 10.0 for k, v in base.items()}
     lb = {k: v / 100.0 * 10.0 for k, v in base.items()}   # ub / 100
@@ -863,19 +858,19 @@ def generate_parameter_profile(prof_name, nprof, base, seed):
 
 
 def generate_sd(x, profile_name):
-    """R: generate_sd, tut.qmd:1262-1276."""
+    """Random-walk sds for a profile: zero on the profiled parameter."""
     sd = {k: x for k in SRJF_PARAMS}
     sd["sigSn"] = 0.0
     sd[profile_name] = 0.0
     return sd
 
 
-PROFILE_BATCH = 50    # starts per mif call; R issues one mif2 per row
+PROFILE_BATCH = 50    # starts per mif call; batching bounds peak GPU memory
 
 
 def run_profile(prof_name, nprof, base, seed):
-    """R: the foreach loop over profile_design rows, then
-    group_by(prof_name) %>% filter(loglik == max(loglik))."""
+    """Fit every row of the profile design, then keep the best log-likelihood
+    at each focal value."""
     design = generate_parameter_profile(prof_name, nprof, base, seed)
     rw = pp.RWSigma(sigmas=generate_sd(0.05, prof_name),
                     init_names=[]).geometric_cooling(0.7)
@@ -913,7 +908,7 @@ def run_profile(prof_name, nprof, base, seed):
 
 
 def mcap_plot(subset, prof_name, obj, xlabel, title):
-    """R: the ggplot at tut.qmd:1366-1384."""
+    """Plot the profile: raw points, smoothed fit, and the MCAP interval."""
     fig, ax = plt.subplots(figsize=(7, 4.5))
     x = subset["log_" + prof_name].to_numpy()
     ax.plot(x, subset["loglik"].to_numpy(), "o", color="black")
@@ -936,8 +931,7 @@ def mcap_plot(subset, prof_name, obj, xlabel, title):
 #| fig-width: 7
 #| fig-height: 4.5
 
-# R: shared_parameter, tut.qmd:1222-1231 -- a distinct vector from the one
-# used for estimation above.
+# A distinct starting vector from the one used for estimation above.
 shared_parameter_mcap = {
     "sigF":     1.116997e-05,
     "sigSn":    0.000000e+00,
@@ -950,13 +944,13 @@ shared_parameter_mcap = {
 }
 shared_parameter_mcap = {k: shared_parameter_mcap[k] for k in SRJF_PARAMS}
 
-nprof_sn = 20                                       # R: tut.qmd:1278
+nprof_sn = 20
 _, subset_data_theta_Sn = run_profile("theta_Sn", nprof_sn,
                                       shared_parameter_mcap, seed=1000)
 mcap_object_theta_Sn = pp.mcap(
     parameter=subset_data_theta_Sn["log_theta_Sn"].to_numpy(),
     loglik=subset_data_theta_Sn["loglik"].to_numpy(),
-    level=0.95, span=0.6, n_grid=1000,              # R: tut.qmd:1363-1364
+    level=0.95, span=0.6, n_grid=1000,
 )
 theta_Sn_mle = mcap_object_theta_Sn.mle
 print(f"MCAP theta_Sn: MLE(log) = {theta_Sn_mle:.4f} -> "
@@ -975,12 +969,11 @@ However, MCAP analysis does not uniformly yield well-defined confidence interval
 #| fig-width: 7
 #| fig-height: 4.5
 
-nprof_jn = 50                                       # R: tut.qmd:1409
+nprof_jn = 50
 _, subset_data_theta_Jn = run_profile("theta_Jn", nprof_jn,
                                       shared_parameter_mcap, seed=2000)
 
-# R thins to 51 bins and keeps the best point in each before calling mcap
-# (tut.qmd:1494-1511).
+# Thin to 51 bins and keep the best point in each before calling mcap.
 edges = np.linspace(subset_data_theta_Jn["log_theta_Jn"].min(),
                     subset_data_theta_Jn["log_theta_Jn"].max(), 51)
 binned = subset_data_theta_Jn.assign(
@@ -992,7 +985,7 @@ subset_data_theta_Jn = (binned.loc[binned.groupby("_bin")["loglik"].idxmax()]
 mcap_object_theta_Jn = pp.mcap(
     parameter=subset_data_theta_Jn["log_theta_Jn"].to_numpy(),
     loglik=subset_data_theta_Jn["loglik"].to_numpy(),
-    level=0.8, span=0.95, n_grid=1000,              # R: tut.qmd:1514-1515
+    level=0.8, span=0.95, n_grid=1000,
 )
 print(f"MCAP theta_Jn: MLE(log) = {mcap_object_theta_Jn.mle:.4f}")
 print(f"  80% CI (log): [{mcap_object_theta_Jn.ci[0]}, "
@@ -1359,7 +1352,7 @@ sirjpf_par_trans = pp.ParTrans(to_est=sirjpf_to_est, from_est=sirjpf_from_est)
 #| label: sirjpf-params-and-construction
 #| code-fold: true
 
-# Shared SIRJPF2 starting vector used by the R tutorial.
+# Shared SIRJPF2 starting vector.
 sirjpf_shared_theta = {
     "ri":       1.307600e+04,  "rn":       5.904676e+01,
     "f_Si":     1.838259e-05,  "f_Sn":     1.105668e-03,
@@ -1432,7 +1425,7 @@ print(f"Shared parameters: {len(panelfood_sirjpf.canonical_shared_param_names)}"
 ```{python}
 #| label: sirjpf-mif
 
-# R: tut.qmd:1983-2062. Section 2 uses its own algorithmic settings.
+# Section 2 uses its own algorithmic settings.
 algorithmic_params_sirjpf = {
     "Np":     [50,  500, 1000],
     "Np_rep": [ 2,   10,   10],
@@ -1444,10 +1437,10 @@ Np_rep_s = algorithmic_params_sirjpf["Np_rep"][RL]
 Mp_s     = algorithmic_params_sirjpf["Mp"][RL]
 Nmif_s   = algorithmic_params_sirjpf["Nmif"][RL]
 
-dent_rw_sd_sirjpf = 0.05                       # R: tut.qmd:1991
-n_searches_sirjpf = 2 * N_WORKERS              # R: 2 * getDoParWorkers()
+dent_rw_sd_sirjpf = 0.05                       # random-walk sd for Section 2
+n_searches_sirjpf = 2 * N_WORKERS              # two searches per worker
 
-# R replicates one identical start; the runs differ only through the RNG.
+# One identical start is replicated; the runs differ only through the RNG.
 sirjpf_rw_sigmas = {k: dent_rw_sd_sirjpf for k in sirjpf_shared_theta}
 sirjpf_rw_sigmas["sigSn"] = 0.0
 sirjpf_rw_sigmas["sigSi"] = 0.0

@@ -2,12 +2,12 @@
 
 This directory holds two Python tutorials built on
 [`pypomp`](https://github.com/pypomp). They analyse the same data with the same
-models; they differ in how closely they follow the R version.
+models; they differ in how much machinery they add around the analysis.
 
 | Source | Rendered | What it is |
 |---|---|---|
-| `daphnia_tut_pypomp.qmd` | [`daphnia_tut_pypomp.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_pypomp.html) | A direct port of [`R-code/tut.qmd`](https://pypomp.github.io/Daphnia-tutorial/R-code/tut.html): the same sections, the same starting values, the same algorithmic settings, the same analyses and figures. |
-| `daphnia_tut_pypomp_advanced.qmd` | [`daphnia_tut_pypomp_advanced.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_pypomp_advanced.html) — **work in progress** | An advanced version that does *not* replicate the R tutorial. It adds numerical validation gates, profile screening, a CPU/GPU section and per-section timings. |
+| `daphnia_tut_pypomp.qmd` | [`daphnia_tut_pypomp.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_pypomp.html) | The tutorial proper: model construction, PIF and MPIF estimation, and the four diagnostics. Its results match [`R-code/tut.qmd`](https://pypomp.github.io/Daphnia-tutorial/R-code/tut.html) up to Monte Carlo error. |
+| `daphnia_tut_pypomp_advanced.qmd` | [`daphnia_tut_pypomp_advanced.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_pypomp_advanced.html) — **work in progress** | An advanced version adding numerical validation gates, profile screening, a CPU/GPU section and per-section timings. |
 
 > **Status.** `daphnia_tut_pypomp.html` is a complete run-level-3 render and
 > passes the release validator: self-contained, every figure embedded, all
@@ -50,10 +50,9 @@ a substitute.
 
 Only `daphnia_tut_pypomp_advanced.qmd` *enforces* this. It reads the git HEAD of
 whatever `import pypomp` resolves to and stops with a `RuntimeError` if it is not
-that revision. `daphnia_tut_pypomp.qmd` has no such guard, because the R tutorial
-it replicates has none — so it will run against any Pypomp you give it and
-quietly produce numbers from that version instead. Check the revision yourself
-before trusting a render of it:
+that revision. `daphnia_tut_pypomp.qmd` has no such guard, so it will run against any Pypomp
+you give it and quietly produce numbers from that version instead. Check the
+revision yourself before trusting a render of it:
 
 ```bash
 git -C ~/git/pypomp rev-parse HEAD    # want ed95e3bd46c1cc188fc8f7d83e89c6d5035b977c
@@ -238,7 +237,7 @@ python validate_tutorial_html.py "${DOC}_standalone.html" --standalone
 The validator checks that every numbered figure contains an image, that no local
 resources remain after packaging, and that no numerical gate printed `FAIL`.
 Note that the last check is vacuous for `daphnia_tut_pypomp.qmd`, which has no
-gates because the R tutorial has none. `embed_quarto_deps.py --check` is the
+numerical gates. `embed_quarto_deps.py --check` is the
 separate guard against a half-assembled page; it reads `${DOC}_files/libs`,
 which only exists immediately after a render, so run it there rather than later.
 
