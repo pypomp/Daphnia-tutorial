@@ -2513,7 +2513,7 @@ code span.kw {
 </header>
 
 
-<p>This tutorial is a Python-Pypomp translation of an <a href="https://pypomp.github.io/Daphnia-tutorial/R-code/tut.html">R-pomp tutorial</a> guiding readers through implementation of the methodology presented by the article, <em>Mechanistic models for panel data: Analysis of ecological experiments with four interacting species</em>, <a href="https://arxiv.org/abs/2506.04508" class="uri">https://arxiv.org/abs/2506.04508</a>.</p>
+<p>This tutorial guides readers through implementation, using the Python package <a href="https://github.com/pypomp"><code>pypomp</code></a>, of the methodology presented by the article, <em>Mechanistic models for panel data: Analysis of ecological experiments with four interacting species</em>, <a href="https://arxiv.org/abs/2506.04508" class="uri">https://arxiv.org/abs/2506.04508</a>.</p>
 <section id="status" class="level3">
 <h3>Status</h3>
 <p>This tutorial extends the peer-reviewed article but is not itself peer-reviewed. It provides additional description of implementation details and data-analysis considerations that arose during the reported research. This tutorial is an accessory intended to support understanding and reproducibility.</p>
@@ -3666,8 +3666,8 @@ Figure 4: MIF log-likelihood traces across independent searches. Colors disting
 <h4>Diagnostic 4: Monte Carlo Adjusted Profile</h4>
 <p>Following <span class="citation" data-cites="ionides17">Ionides et al. (<a href="#ref-ionides17" role="doc-biblioref">2017</a>)</span> and <span class="citation" data-cites="ning21">Ning, Ionides, and Ritov (<a href="#ref-ning21" role="doc-biblioref">2021</a>)</span>, the Monte Carlo Adjusted Profile (MCAP) method provides confidence intervals when the likelihood is evaluated and maximised by Monte Carlo algorithms. A smoothed estimate of the profile likelihood reduces Monte Carlo error, quantifies it, and adjusts the confidence-interval cutoff so that nominal coverage is maintained. MCAP is especially useful in high-dimensional problems such as PanelPOMP inference, where it is impractical to spend enough compute to make Monte Carlo error negligible. Section S1 of the Supplement summarises the algorithm and its theoretical guarantees.</p>
 <p>The interpretation of an MCAP result depends on the observed profile. A sharply curved profile with the unrestricted MIF estimate near the smoothed maximum differs from a nearly flat profile or one whose maximum lies on a grid boundary. Following the R tutorial, we examine the adult mortality rate <span class="math inline">\(\theta^n_S\)</span> and the juvenile mortality rate <span class="math inline">\(\theta^n_J\)</span> to illustrate these contrasting identifiability patterns.</p>
-<p>Pypomp’s <code>pp.mcap(parameter, loglik, level=0.95, span=0.75)</code> accepts a one-dimensional grid of focal-parameter values and the corresponding profile log-likelihoods, and returns an <code>MCAPResult</code> with attributes <code>mle</code>, <code>ci</code>, <code>delta</code>, <code>se_stat</code>, <code>se_mc</code>, <code>se_total</code>, <code>quadratic_coef</code>, <code>quadratic_max</code>, <code>vcov</code>, and a <code>fit</code> dictionary holding the smoothed and quadratic-fit curves on a fine grid. There is no built-in profile-grid generator, so the profile design follows the R tutorial directly.</p>
-<p>The design is the one used by <code>R-code/tut.qmd</code>. For each focal parameter we take <code>nprof</code> values spaced logarithmically over a decade in each direction around the estimate, and at every focal value we start <code>nprof</code> independent MIF searches whose remaining free parameters are drawn log-uniformly across the same box, exactly as <code>pomp::profile_design(type = "runif")</code> does. The focal parameter is held fixed by setting its random-walk standard deviation to zero, every search is evaluated by a multi-replicate <code>pfilter</code>, and the profile point is the best of the searches at that focal value. This dispersed multi-start design is what keeps the profile away from the fixed <span class="math inline">\(-150\)</span> constraint penalty: a focal value whose starts are all clustered in one region can be trapped where the measurement model penalises every trajectory, whereas starts spread across the box will normally include a feasible one.</p>
+<p>Pypomp’s <code>pp.mcap(parameter, loglik, level=0.95, span=0.75)</code> accepts a one-dimensional grid of focal-parameter values and the corresponding profile log-likelihoods, and returns an <code>MCAPResult</code> with attributes <code>mle</code>, <code>ci</code>, <code>delta</code>, <code>se_stat</code>, <code>se_mc</code>, <code>se_total</code>, <code>quadratic_coef</code>, <code>quadratic_max</code>, <code>vcov</code>, and a <code>fit</code> dictionary holding the smoothed and quadratic-fit curves on a fine grid. There is no built-in profile-grid generator, so the profile design is built here.</p>
+<p>For each focal parameter we take <code>nprof</code> values spaced logarithmically over a decade in each direction around the estimate, and at every focal value we start <code>nprof</code> independent MIF searches whose remaining free parameters are drawn log-uniformly across the same box. The focal parameter is held fixed by setting its random-walk standard deviation to zero, every search is evaluated by a multi-replicate <code>pfilter</code>, and the profile point is the best of the searches at that focal value. This dispersed multi-start design is what keeps the profile away from the fixed <span class="math inline">\(-150\)</span> constraint penalty: a focal value whose starts are all clustered in one region can be trapped where the measurement model penalises every trajectory, whereas starts spread across the box will normally include a feasible one.</p>
 <p>At <code>run_level = 1</code>, the following calculations test execution only. Profile curves and intervals are suppressed. At levels 2 and 3, a figure is displayed only after its declared numerical gate passes. The raw tables report the focal value, likelihood, MCSE and unrestricted-likelihood gap before smoothing. The final gate also checks sensitivity to the smoothing span and to a coarser subset of the grid; a final scientific render should additionally be compared across run levels 2 and 3.</p>
 <p>A well-identified parameter is the textbook case. Four diagnostic observations should <em>all</em> hold: the smoothed profile <span class="math inline">\(\tilde\ell_P\)</span> shows clear curvature around an interior maximum, the MIF point estimate from <code>srjf-mif-search</code> sits inside (and ideally close to) the resulting MCAP confidence interval, the local-quadratic coefficient <code>quadratic_coef['a']</code> is comfortably positive (the profile is locally concave on the negative log scale), and the 95% CI is narrow on the natural scale. When all four hold, MCAP can be reported as the final uncertainty quantification.</p>
 <div id="srjf-mcap-theta-sn" class="cell" data-execution_count="20">
@@ -3690,8 +3690,7 @@ Figure 4: MIF log-likelihood traces across independent searches. Colors disting
 <span id="cb25-15"><a href="#cb25-15" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> _profile_raw_table(subset_df, prof_name, unrestricted_loglik):</span>
 <span id="cb25-16"><a href="#cb25-16" aria-hidden="true" tabindex="-1"></a>    <span class="co">&quot;&quot;&quot;Return the pre-smoothing numerical audit table for a profile.</span></span>
 <span id="cb25-17"><a href="#cb25-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb25-18"><a href="#cb25-18" aria-hidden="true" tabindex="-1"></a><span class="co">    One row per focal value: the best of the dispersed starts at that value,</span></span>
-<span id="cb25-19"><a href="#cb25-19" aria-hidden="true" tabindex="-1"></a><span class="co">    as in R&#39;s group_by(prof_name) %&gt;% filter(loglik == max(loglik)).</span></span>
+<span id="cb25-18"><a href="#cb25-18" aria-hidden="true" tabindex="-1"></a><span class="co">    One row per focal value: the best of the dispersed starts at that value.</span></span>
 <span id="cb25-20"><a href="#cb25-20" aria-hidden="true" tabindex="-1"></a><span class="co">    &quot;&quot;&quot;</span></span>
 <span id="cb25-21"><a href="#cb25-21" aria-hidden="true" tabindex="-1"></a>    loglik <span class="op">=</span> subset_df[<span class="st">&quot;loglik&quot;</span>].to_numpy()</span>
 <span id="cb25-22"><a href="#cb25-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> pd.DataFrame({</span>
@@ -3815,14 +3814,14 @@ Figure 4: MIF log-likelihood traces across independent searches. Colors disting
 <span id="cb25-140"><a href="#cb25-140" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">int</span>(finite[np.argmax(values[finite])])</span>
 <span id="cb25-141"><a href="#cb25-141" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb25-142"><a href="#cb25-142" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb25-143"><a href="#cb25-143" aria-hidden="true" tabindex="-1"></a><span class="co"># ---- Profile machinery, following R-code/tut.qmd -------------------------</span></span>
+<span id="cb25-143"><a href="#cb25-143" aria-hidden="true" tabindex="-1"></a><span class="co"># ---- Profile machinery ---------------------------------------------------</span></span>
 <span id="cb25-144"><a href="#cb25-144" aria-hidden="true" tabindex="-1"></a><span class="co"># R draws every profile start log-uniformly across the full parameter box and</span></span>
 <span id="cb25-145"><a href="#cb25-145" aria-hidden="true" tabindex="-1"></a><span class="co"># keeps the best start at each focal value. That dispersed design, rather than</span></span>
 <span id="cb25-146"><a href="#cb25-146" aria-hidden="true" tabindex="-1"></a><span class="co"># any screening of the output, is what keeps the R profile clear of the fixed</span></span>
 <span id="cb25-147"><a href="#cb25-147" aria-hidden="true" tabindex="-1"></a><span class="co"># -150 constraint penalty.</span></span>
 <span id="cb25-148"><a href="#cb25-148" aria-hidden="true" tabindex="-1"></a>PROFILE_MCSE_LIMIT <span class="op">=</span> <span class="bu">max</span>(<span class="fl">5.0</span>, <span class="fl">2.0</span> <span class="op">*</span> best_ll_se)</span>
-<span id="cb25-149"><a href="#cb25-149" aria-hidden="true" tabindex="-1"></a>PROFILE_BOX_FACTOR <span class="op">=</span> <span class="fl">10.0</span>     <span class="co"># R: shared_ub = theta * 10; shared_lb = ub / 100</span></span>
-<span id="cb25-150"><a href="#cb25-150" aria-hidden="true" tabindex="-1"></a>PROFILE_RW_SD <span class="op">=</span> <span class="fl">0.05</span>          <span class="co"># R: generate_sd(x = 0.05)</span></span>
+<span id="cb25-149"><a href="#cb25-149" aria-hidden="true" tabindex="-1"></a>PROFILE_BOX_FACTOR <span class="op">=</span> <span class="fl">10.0</span>     <span class="co"># box is [theta / 10, theta * 10]</span></span>
+<span id="cb25-150"><a href="#cb25-150" aria-hidden="true" tabindex="-1"></a>PROFILE_RW_SD <span class="op">=</span> <span class="fl">0.05</span>          <span class="co"># random-walk sd for the profile searches</span></span>
 <span id="cb25-151"><a href="#cb25-151" aria-hidden="true" tabindex="-1"></a>PROFILE_BATCH <span class="op">=</span> <span class="dv">50</span>            <span class="co"># starts per mif call; R used one mif2 per row</span></span>
 <span id="cb25-152"><a href="#cb25-152" aria-hidden="true" tabindex="-1"></a>PROFILE_INFORMATIVE_DROP <span class="op">=</span> <span class="fl">50.0</span></span>
 <span id="cb25-153"><a href="#cb25-153" aria-hidden="true" tabindex="-1"></a>PROFILE_IMPLAUSIBLE_GAIN <span class="op">=</span> <span class="fl">10.0</span></span>
@@ -3883,11 +3882,11 @@ Figure 4: MIF log-likelihood traces across independent searches. Colors disting
 <span id="cb25-208"><a href="#cb25-208" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb25-209"><a href="#cb25-209" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb25-210"><a href="#cb25-210" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> generate_parameter_profile(prof_name, nprof, seed):</span>
-<span id="cb25-211"><a href="#cb25-211" aria-hidden="true" tabindex="-1"></a>    <span class="co">&quot;&quot;&quot;R: pomp::profile_design(type = &quot;runif&quot;).</span></span>
+<span id="cb25-211"><a href="#cb25-211" aria-hidden="true" tabindex="-1"></a>    <span class="co">&quot;&quot;&quot;Build a randomised profile design.</span></span>
 <span id="cb25-212"><a href="#cb25-212" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb25-213"><a href="#cb25-213" aria-hidden="true" tabindex="-1"></a><span class="co">    `nprof` focal values spanning [theta/10, theta*10] on the log scale; at</span></span>
 <span id="cb25-214"><a href="#cb25-214" aria-hidden="true" tabindex="-1"></a><span class="co">    each, `nprof` starts with every other free parameter drawn log-uniformly</span></span>
-<span id="cb25-215"><a href="#cb25-215" aria-hidden="true" tabindex="-1"></a><span class="co">    across the same box. sigSn is held at zero, as in the R tutorial.</span></span>
+<span id="cb25-215"><a href="#cb25-215" aria-hidden="true" tabindex="-1"></a><span class="co">    across the same box. sigSn is held at zero.</span></span>
 <span id="cb25-216"><a href="#cb25-216" aria-hidden="true" tabindex="-1"></a><span class="co">    &quot;&quot;&quot;</span></span>
 <span id="cb25-217"><a href="#cb25-217" aria-hidden="true" tabindex="-1"></a>    rng <span class="op">=</span> np.random.default_rng(seed)</span>
 <span id="cb25-218"><a href="#cb25-218" aria-hidden="true" tabindex="-1"></a>    lb <span class="op">=</span> {k: v <span class="op">/</span> PROFILE_BOX_FACTOR <span class="cf">for</span> k, v <span class="kw">in</span> srjf_mle_theta.items()}</span>
@@ -3919,13 +3918,12 @@ Figure 4: MIF log-likelihood traces across independent searches. Colors disting
 <span id="cb25-244"><a href="#cb25-244" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb25-245"><a href="#cb25-245" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb25-246"><a href="#cb25-246" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> run_profile(prof_name, nprof, seed):</span>
-<span id="cb25-247"><a href="#cb25-247" aria-hidden="true" tabindex="-1"></a>    <span class="co">&quot;&quot;&quot;R: the foreach loop over profile_design rows, then</span></span>
-<span id="cb25-248"><a href="#cb25-248" aria-hidden="true" tabindex="-1"></a><span class="co">    group_by(prof_name) %&gt;% filter(loglik == max(loglik)).</span></span>
+<span id="cb25-247"><a href="#cb25-247" aria-hidden="true" tabindex="-1"></a>    <span class="co">&quot;&quot;&quot;Fit every row of the profile design, then keep the best log-likelihood</span></span>
+<span id="cb25-248"><a href="#cb25-248" aria-hidden="true" tabindex="-1"></a><span class="co">    at each focal value.</span></span>
 <span id="cb25-249"><a href="#cb25-249" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb25-250"><a href="#cb25-250" aria-hidden="true" tabindex="-1"></a><span class="co">    Pypomp vectorises MIF over the start dimension, so rows are processed in</span></span>
-<span id="cb25-251"><a href="#cb25-251" aria-hidden="true" tabindex="-1"></a><span class="co">    batches of PROFILE_BATCH instead of one at a time as in R&#39;s foreach. The</span></span>
-<span id="cb25-252"><a href="#cb25-252" aria-hidden="true" tabindex="-1"></a><span class="co">    batch size trades GPU memory against wall time and does not change the</span></span>
-<span id="cb25-253"><a href="#cb25-253" aria-hidden="true" tabindex="-1"></a><span class="co">    method.</span></span>
+<span id="cb25-251"><a href="#cb25-251" aria-hidden="true" tabindex="-1"></a><span class="co">    batches of PROFILE_BATCH rather than one at a time. The batch size trades</span></span>
+<span id="cb25-252"><a href="#cb25-252" aria-hidden="true" tabindex="-1"></a><span class="co">    GPU memory against wall time and does not change the method.</span></span>
 <span id="cb25-254"><a href="#cb25-254" aria-hidden="true" tabindex="-1"></a><span class="co">    &quot;&quot;&quot;</span></span>
 <span id="cb25-255"><a href="#cb25-255" aria-hidden="true" tabindex="-1"></a>    parameter_shared <span class="op">=</span> generate_parameter_profile(prof_name, nprof, seed)</span>
 <span id="cb25-256"><a href="#cb25-256" aria-hidden="true" tabindex="-1"></a>    dent_rw_sd_first <span class="op">=</span> generate_sd(PROFILE_RW_SD, prof_name)</span>
@@ -3971,7 +3969,7 @@ Figure 4: MIF log-likelihood traces across independent searches. Colors disting
 <span id="cb25-296"><a href="#cb25-296" aria-hidden="true" tabindex="-1"></a><span class="co"># Profile: theta_Sn --------------------------------------------------------</span></span>
 <span id="cb25-297"><a href="#cb25-297" aria-hidden="true" tabindex="-1"></a>name_str <span class="op">=</span> <span class="st">&quot;theta_Sn&quot;</span></span>
 <span id="cb25-298"><a href="#cb25-298" aria-hidden="true" tabindex="-1"></a>focal_Sn <span class="op">=</span> name_str</span>
-<span id="cb25-299"><a href="#cb25-299" aria-hidden="true" tabindex="-1"></a>nprof_Sn <span class="op">=</span> <span class="dv">20</span>          <span class="co"># R: generate_parameter_profile(name_str, 20)</span></span>
+<span id="cb25-299"><a href="#cb25-299" aria-hidden="true" tabindex="-1"></a>nprof_Sn <span class="op">=</span> <span class="dv">20</span>          <span class="co"># focal values, and starts per focal value</span></span>
 <span id="cb25-300"><a href="#cb25-300" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb25-301"><a href="#cb25-301" aria-hidden="true" tabindex="-1"></a>final_params_Sn, subset_data_theta_Sn <span class="op">=</span> cached(</span>
 <span id="cb25-302"><a href="#cb25-302" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;srjf_profile_theta_Sn&quot;</span>,</span>
@@ -3993,7 +3991,7 @@ Figure 4: MIF log-likelihood traces across independent searches. Colors disting
 <span id="cb25-318"><a href="#cb25-318" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb25-319"><a href="#cb25-319" aria-hidden="true" tabindex="-1"></a>mcap_Sn, mcap_Sn_warnings <span class="op">=</span> _mcap_checked(</span>
 <span id="cb25-320"><a href="#cb25-320" aria-hidden="true" tabindex="-1"></a>    parameter<span class="op">=</span>log_grid_Sn[keep_Sn], loglik<span class="op">=</span>ll_grid_Sn[keep_Sn],</span>
-<span id="cb25-321"><a href="#cb25-321" aria-hidden="true" tabindex="-1"></a>    span<span class="op">=</span><span class="fl">0.6</span>, level<span class="op">=</span><span class="fl">0.95</span>,          <span class="co"># R: span = 0.6, level = 0.95</span></span>
+<span id="cb25-321"><a href="#cb25-321" aria-hidden="true" tabindex="-1"></a>    span<span class="op">=</span><span class="fl">0.6</span>, level<span class="op">=</span><span class="fl">0.95</span>,</span>
 <span id="cb25-322"><a href="#cb25-322" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb25-323"><a href="#cb25-323" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> mcap_Sn_warnings:</span>
 <span id="cb25-324"><a href="#cb25-324" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="st">&quot;  Captured MCAP numerical diagnostics:&quot;</span>)</span>
@@ -4227,7 +4225,7 @@ Figure 5: Validated MCAP profile log-likelihood for <span class="math inline">\
 <div class="sourceCode" id="cb28"><pre class="sourceCode python cell-code"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Profile: theta_Jn --------------------------------------------------------</span></span>
 <span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>name_str <span class="op">=</span> <span class="st">&quot;theta_Jn&quot;</span></span>
 <span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>focal_Jn <span class="op">=</span> name_str</span>
-<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>nprof_Jn <span class="op">=</span> <span class="dv">50</span>          <span class="co"># R: generate_parameter_profile(name_str, 50)</span></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>nprof_Jn <span class="op">=</span> <span class="dv">50</span>          <span class="co"># focal values, and starts per focal value</span></span>
 <span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>final_params_Jn, subset_data_theta_Jn <span class="op">=</span> cached(</span>
 <span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;srjf_profile_theta_Jn&quot;</span>,</span>
@@ -4249,7 +4247,7 @@ Figure 5: Validated MCAP profile log-likelihood for <span class="math inline">\
 <span id="cb28-23"><a href="#cb28-23" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb28-24"><a href="#cb28-24" aria-hidden="true" tabindex="-1"></a>mcap_Jn, mcap_Jn_warnings <span class="op">=</span> _mcap_checked(</span>
 <span id="cb28-25"><a href="#cb28-25" aria-hidden="true" tabindex="-1"></a>    parameter<span class="op">=</span>log_grid_Jn[keep_Jn], loglik<span class="op">=</span>ll_grid_Jn[keep_Jn],</span>
-<span id="cb28-26"><a href="#cb28-26" aria-hidden="true" tabindex="-1"></a>    span<span class="op">=</span><span class="fl">0.95</span>, level<span class="op">=</span><span class="fl">0.8</span>,          <span class="co"># R: span = 0.95, level = 0.8</span></span>
+<span id="cb28-26"><a href="#cb28-26" aria-hidden="true" tabindex="-1"></a>    span<span class="op">=</span><span class="fl">0.95</span>, level<span class="op">=</span><span class="fl">0.8</span>,</span>
 <span id="cb28-27"><a href="#cb28-27" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb28-28"><a href="#cb28-28" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> mcap_Jn_warnings:</span>
 <span id="cb28-29"><a href="#cb28-29" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(<span class="st">&quot;  Captured MCAP numerical diagnostics:&quot;</span>)</span>
