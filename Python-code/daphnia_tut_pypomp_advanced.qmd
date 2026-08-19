@@ -64,6 +64,13 @@ if run_level not in (1, 2, 3):
 if not use_gpu:
     os.environ["JAX_PLATFORMS"] = "cpu"
 
+# The negative-binomial log likelihood is not numerically reliable in JAX's
+# default single precision for this model. In particular, the difference of
+# large gammaln terms can cancel catastrophically and produce spuriously high
+# likelihoods that a multi-start profile will preferentially select. Set x64
+# before importing JAX and verify it immediately afterwards.
+os.environ["JAX_ENABLE_X64"] = "1"
+
 import time
 import base64
 import hashlib
@@ -84,6 +91,9 @@ import jax.numpy as jnp
 
 import pypomp as pp
 from pypomp.maths import logmeanexp, logmeanexp_se
+
+if not jax.config.jax_enable_x64:
+    raise RuntimeError("JAX_ENABLE_X64 must be set before jax is imported")
 
 RUN_LEVELS = {
     1: {
@@ -180,10 +190,10 @@ def _git_commit(path):
 
 # ---------- Provenance-safe pickle cache for expensive computations -------
 # The cache fingerprint changes whenever executable QMD code, data, software,
-# the model contract, or the run-level configuration changes. Old cache_1/2/3
-# payloads are deliberately ignored.
+# the model contract, numerical precision, or the run-level configuration
+# changes. Payloads from older cache schemas are deliberately ignored.
 MODEL_CONTRACT_VERSION = "daphnia-production-2026-07-16"
-CACHE_SCHEMA_VERSION = "daphnia-qmd-cache-v4"
+CACHE_SCHEMA_VERSION = "daphnia-qmd-cache-v5"
 EXPECTED_PYPOMP_VERSION = "0.4.6.0"
 EXPECTED_PYPOMP_COMMIT = "ed95e3bd46c1cc188fc8f7d83e89c6d5035b977c"
 QMD_PATH = _find_existing_path(
@@ -206,6 +216,7 @@ CACHE_METADATA = {
     "numpy": np.__version__,
     "pandas": pd.__version__,
     "backend": jax.default_backend(),
+    "jax_enable_x64": bool(jax.config.jax_enable_x64),
     "run_level": run_level,
     "run_config": RL,
 }
@@ -326,7 +337,7 @@ We demonstrate the complete PanelPOMP workflow using two models of increasing co
 
 Pypomp uses JAX and can execute on either a CPU or an available accelerator. For simplicity this tutorial uses a GPU for the whole workflow; CPU execution remains available by leaving `DAPHNIA_USE_GPU=0`, but no CPU render of this document has been made and no speedup is claimed here, because a matched benchmark is not part of the tutorial. The per-section wall times reported below were all measured on one NVIDIA A40.
 
-Three implementation details had to be resolved before the GPU path worked. `JAX_PLATFORMS` must be set before `import jax`: once a backend has initialised, `jax.config.update("jax_platform_name", ...)` is a silent no-op, which is why the assignment precedes the import in the setup chunk. The cluster wrapper originally requested a GPU node without setting `DAPHNIA_USE_GPU=1`, so JAX was forced onto the CPU on a GPU allocation. And on a shared card, `XLA_PYTHON_CLIENT_PREALLOCATE=false` together with `XLA_PYTHON_CLIENT_ALLOCATOR=platform` stops JAX reserving the whole device. Separately, Quarto exhausts memory while embedding resources on the cluster, so the wrapper renders with external images and inlines them afterwards. The JAX backend is part of the cache fingerprint, so CPU results cannot be silently reused in a GPU render.
+Four implementation details had to be resolved before the GPU path was scientifically usable. `JAX_PLATFORMS` must be set before `import jax`: once a backend has initialised, `jax.config.update("jax_platform_name", ...)` is a silent no-op, which is why the assignment precedes the import in the setup chunk. The cluster wrapper originally requested a GPU node without setting `DAPHNIA_USE_GPU=1`, so JAX was forced onto the CPU on a GPU allocation. The particle filter also requires double precision: in single precision the negative-binomial `gammaln` difference can cancel catastrophically and produce spuriously high likelihoods, so the setup forces `JAX_ENABLE_X64=1` before importing JAX and stops if x64 is unavailable. On a shared card, `XLA_PYTHON_CLIENT_PREALLOCATE=false` together with `XLA_PYTHON_CLIENT_ALLOCATOR=platform` stops JAX reserving the whole device. Separately, Quarto exhausts memory while embedding resources on the cluster, so the wrapper renders with external images and inlines them afterwards. The JAX backend and precision mode are both part of the cache fingerprint, so CPU/GPU or float32/float64 results cannot be silently interchanged.
 
 ```{python}
 #| label: print-setup
@@ -341,6 +352,9 @@ print(f"Pypomp commit: {CACHE_METADATA['pypomp_commit']}")
 print(f"JAX: {jax.__version__}; NumPy: {np.__version__}; "
       f"Pandas: {pd.__version__}")
 print(f"JAX backend: {jax.default_backend()}")
+print(f"JAX x64 enabled: {bool(jax.config.jax_enable_x64)}")
+print(f"Host: {platform.node()}; ResearchGrid job: "
+      f"{os.getenv('JOB_ID', 'interactive/not submitted')}")
 print(f"Cache fingerprint: {CACHE_FINGERPRINT}")
 ```
 
@@ -1441,14 +1455,17 @@ A well-identified parameter is the textbook case. Four diagnostic observations s
 #| label: srjf-mcap-theta-Sn
 #| code-fold: true
 
-def _mcap_checked(parameter, loglik, span, level=0.95):
-    """Run MCAP while converting numerical warnings into validation data."""
+MCAP_LEVEL = 0.95
+
+
+def _mcap_checked(parameter, loglik, span):
+    """Run a 95% MCAP fit while retaining numerical warnings for validation."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = pp.mcap(
             parameter=parameter,
             loglik=loglik,
-            level=level,
+            level=MCAP_LEVEL,
             span=span,
         )
     warning_messages = sorted({str(item.message) for item in caught})
@@ -1759,7 +1776,7 @@ keep_Sn = _profile_mask(ll_grid_Sn, best_ll, "theta_Sn")
 
 mcap_Sn, mcap_Sn_warnings = _mcap_checked(
     parameter=log_grid_Sn[keep_Sn], loglik=ll_grid_Sn[keep_Sn],
-    span=0.6, level=0.95,
+    span=0.6,
 )
 if mcap_Sn_warnings:
     print("  Captured MCAP numerical diagnostics:")
@@ -1978,7 +1995,7 @@ keep_Jn = _profile_mask(ll_grid_Jn, best_ll, "theta_Jn")
 
 mcap_Jn, mcap_Jn_warnings = _mcap_checked(
     parameter=log_grid_Jn[keep_Jn], loglik=ll_grid_Jn[keep_Jn],
-    span=0.95, level=0.8,
+    span=0.95,
 )
 if mcap_Jn_warnings:
     print("  Captured MCAP numerical diagnostics:")
