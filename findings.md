@@ -35,6 +35,26 @@
 | Pass `level=0.95` explicitly to all MCAP base and stability runs | The user requires 95% CIs exclusively, and stability comparisons require identical levels. |
 | Split convergence from cross-method agreement | These are different claims and currently have different evidence. |
 | Use positional wrapper arguments for document selection | Keeps the requested document in the ResearchGrid job command rather than depending on inherited environment state. |
+| Remove advanced-QMD PASS/FAIL and figure suppression policy | Computations and diagnostics will remain visible; only genuine execution-invalidating conditions should stop the document. |
+
+## 2026-08-23 Failed float64 level-2 render
+
+- The requested advanced document ran on `researchgpu06` with the GPU backend and JAX x64 enabled.
+- The wrapper recovered from Quarto/Deno exit 139 and produced a structurally valid standalone artifact.
+- The artifact was not published because the QMD emitted five gate failures.
+- The SRJF best MIF candidate matched the stored reference within MCSE, but a convergence failure triggered fallback to the R starting vector and caused a misleading reference-gate failure.
+- The `theta_Sn` 95% MCAP interval was stable; the `theta_Jn` interval reached both grid boundaries and should be shown as computed without being presented as a validated finite interval.
+- SIRJPF2 refinement degraded all three selected starts, and PIF/MPIF each had one converged start; these quantities should remain visible without suppressing their figures.
+
+## Implemented transparent-reporting changes
+
+- SRJF now always uses the best finite computed MIF candidate and reports per-start likelihoods, MCSEs, near-best count, and differences from the starting and stored-reference likelihoods.
+- SRJF AIC is always calculated from the displayed likelihood estimates; the embedded-null difference, likelihood improvement, and combined MCSE are printed alongside it.
+- MCAP now prints the raw profile table, base 95% interval, fit quantities, grid-edge distances, and sensitivity calculations, and always emits each figure.
+- SIRJPF2 now prints reference differences, refinement results, near-best counts, and the PIF-minus-MPIF likelihood difference, and displays both figures unconditionally.
+- `_emit_gated_figure` was replaced with an unconditional `_emit_figure` helper that preserves self-contained image embedding.
+- Profile filtering of non-finite, implausibly high, and extreme low-likelihood points is computational preprocessing rather than reporting policy; it remains, and its output describes each exclusion directly.
+- Candidate selection now raises `ValueError` when every value is non-finite instead of silently selecting index zero.
 
 ## Resources
 

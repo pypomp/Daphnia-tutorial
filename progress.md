@@ -41,3 +41,16 @@
 |---|---:|---|
 | Setup test could not find QMD when run from repository root | 1 | Re-ran from `Python-code`, matching the render wrapper; resolved |
 | Planning-file update patch expected a missing section | 1 | Inspected files and applied a narrower matching patch; resolved |
+
+## Session: 2026-08-23
+
+### Phase: Transparent-reporting revision
+
+- **Status:** complete
+- Inspected the failed float64 level-2 standalone render and quantified every reported numerical failure.
+- Replaced the advanced QMD's PASS/FAIL, fallback, suppression, and gated-figure policy with unconditional numerical and graphical reporting.
+- Removed SRJF candidate fallback and AIC suppression; the best computed candidate is retained and all likelihood/AIC differences are printed.
+- Replaced MCAP Boolean validation dictionaries and gated figures with unconditional MCAP summaries, numerical sensitivity tables, and figures.
+- Replaced SIRJPF verdicts and figure suppression with reference differences, refinement tables, near-best counts, and an unconditional PIF/MPIF comparison.
+- Changed the all-non-finite candidate fallback to a clear `ValueError`; configuration, version, x64, file, and unusable-input checks remain.
+- Confirmed no gate/PASS/FAIL/suppression terminology remains in the advanced QMD, all 37 chunks compile, `git diff --check` passes, and the full CPU run-level-1 smoke test completes all chunks in 391 seconds.

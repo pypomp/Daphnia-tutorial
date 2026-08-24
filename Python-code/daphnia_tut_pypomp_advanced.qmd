@@ -909,13 +909,22 @@ def _run_srjf_mif():
     }
 
 
+def _finite_argmax(values):
+    """Return the best finite index, or stop if no result is usable."""
+    values = np.asarray(values, dtype=float)
+    finite = np.flatnonzero(np.isfinite(values))
+    if not len(finite):
+        raise ValueError("Cannot select a best result: all values are non-finite.")
+    return int(finite[np.argmax(values[finite])])
+
+
 mif_out = cached("srjf_mif_search", _run_srjf_mif)
 mif_ll_arr = mif_out["ll_arr"]                       # (Nstarts, U, reps)
 mif_traces = mif_out["traces"]
 unit_ll_per_start, unit_se_per_start, panel_ll_per_start, panel_se_per_start = (
     summarize_panel_loglik(mif_ll_arr)
 )
-best_idx = int(np.nanargmax(panel_ll_per_start))
+best_idx = _finite_argmax(panel_ll_per_start)
 best_ll = float(panel_ll_per_start[best_idx])
 best_ll_se = float(panel_se_per_start[best_idx])
 unit_ll_best = unit_ll_per_start[best_idx]
@@ -941,24 +950,14 @@ agreement_tol = np.maximum(
         panel_se_per_start**2 + srjf_mif_candidate_se**2
     ),
 )
-srjf_converged = int(np.sum(
+srjf_near_best_count = int(np.sum(
     srjf_mif_candidate_ll - panel_ll_per_start <= agreement_tol
-)) >= min(3, Nstarts)
-srjf_search_not_worse = (
-    srjf_mif_candidate_ll +
-    2.0 * np.sqrt(srjf_mif_candidate_se**2 + srjf_start_se**2)
-    >= srjf_start_ll
-)
-srjf_search_valid = srjf_converged and srjf_search_not_worse
-if srjf_search_valid:
-    srjf_mle_theta = dict(srjf_mif_candidate_theta)
-else:
-    # A smoke-level MIF run can move away from the R tutorial start.
-    # Downstream nested comparisons and profiles must not be based on a
-    # demonstrably worse terminal point, so retain that starting vector.
-    srjf_mle_theta = dict(srjf_shared_theta)
-    best_ll = srjf_start_ll
-    best_ll_se = srjf_start_se
+))
+srjf_mle_theta = dict(srjf_mif_candidate_theta)
+srjf_change_from_start = srjf_mif_candidate_ll - srjf_start_ll
+srjf_start_combined_se = float(np.sqrt(
+    srjf_mif_candidate_se**2 + srjf_start_se**2
+))
 
 srjf_mle_panel_theta = pp.PanelParameters({
     "shared": pd.DataFrame(
@@ -971,29 +970,32 @@ print(f"MIF + final pfilter wall: {TIMINGS['srjf_mif_search']:.1f}s")
 print(mif_summary.to_string(index=False))
 print(f"Best MIF start: {best_idx}, panel logLik = "
       f"{srjf_mif_candidate_ll:.2f} (MCSE {srjf_mif_candidate_se:.2f})")
-print(f"Multi-start convergence gate: {'PASS' if srjf_converged else 'FAIL'}")
-print(f"Non-degradation gate: {'PASS' if srjf_search_not_worse else 'FAIL'}")
 print(
-    "Downstream baseline: "
-    + ("validated MIF candidate" if srjf_search_valid
-       else "R tutorial starting vector")
+    "Starts within the stated MCSE-based tolerance of the best: "
+    f"{srjf_near_best_count} of {Nstarts}"
+)
+print(
+    "Best MIF minus R starting-vector logLik: "
+    f"{srjf_change_from_start:+.2f} "
+    f"(combined MCSE {srjf_start_combined_se:.2f})"
 )
 srjf_reference_ll = -498.7808
 srjf_reference_se = 0.324
 srjf_reference_gap_se = float(np.sqrt(
-    best_ll_se**2 + srjf_reference_se**2
+    srjf_mif_candidate_se**2 + srjf_reference_se**2
 ))
-srjf_reproduces = (
-    abs(best_ll - srjf_reference_ll)
-    <= max(1.0, 2.0 * srjf_reference_gap_se)
+srjf_reference_difference = srjf_mif_candidate_ll - srjf_reference_ll
+print(
+    "Best MIF minus stored reference logLik: "
+    f"{srjf_reference_difference:+.2f} "
+    f"(combined MCSE {srjf_reference_gap_se:.2f})"
 )
-print(f"Reference-likelihood gate: {'PASS' if srjf_reproduces else 'FAIL'}")
-print("\nSelected all-shared baseline parameters:")
+print("\nSelected all-shared MIF parameters:")
 for k in PARAM_NAMES:
     print(f"  {k:>10s}: {srjf_mle_theta[k]:.6g}")
 ```
 
-The best terminal parameter vector is used downstream only when the multi-start agreement and non-degradation gates pass. Otherwise, as is common at the smoke-test run level, the tutorial retains the R tutorial starting vector so that a deliberately cheap search cannot corrupt the nested-model and profile demonstrations. Two clarifications on the call:
+The best finite terminal parameter vector is used in the calculations below. The complete table of independently evaluated terminal likelihoods, their Monte Carlo standard errors, the number within the stated tolerance of the best, and the differences from the starting and stored reference likelihoods are printed so that the reader can assess the optimisation directly. Two clarifications on the call:
 
 - **Cooling is configured on `RWSigma`.** Calling `.geometric_cooling(0.7)` makes 0.7 the multiplicative reduction in perturbation standard deviation accumulated over fifty iterations.
 - **`block=False` selects standard PIF.** The MPIF implementation with `block=True` is demonstrated in Diagnostic 2 for the mixed SRJF model containing unit-specific adult mortality.
@@ -1307,10 +1309,7 @@ _, _, embedded_panel_ll, embedded_panel_se = summarize_panel_loglik(
 embedded_ll = float(embedded_panel_ll[0])
 embedded_se = float(embedded_panel_se[0])
 embedded_combined_mcse = float(np.sqrt(best_ll_se**2 + embedded_se**2))
-embedded_ok = (
-    abs(embedded_ll - best_ll)
-    <= max(1.0, 2.0 * embedded_combined_mcse)
-)
+embedded_difference = embedded_ll - best_ll
 
 
 def _run_srjf_uspec():
@@ -1334,7 +1333,7 @@ uspec_ll = uspec_out["ll"]                                  # (Nstarts, U, reps)
 uspec_unit_ll, uspec_unit_se, uspec_ll_per_start, uspec_se_per_start = (
     summarize_panel_loglik(uspec_ll)
 )
-uspec_best = int(np.nanargmax(uspec_ll_per_start))
+uspec_best = _finite_argmax(uspec_ll_per_start)
 ll_uspec_best = float(uspec_ll_per_start[uspec_best])
 uspec_se = float(uspec_se_per_start[uspec_best])
 uspec_best_theta = uspec_out["final_theta"][uspec_best]
@@ -1347,22 +1346,9 @@ theta_Sn_cv = float(theta_Sn_by_unit.std(ddof=1) / theta_Sn_by_unit.mean())
 p_shared = 7
 p_specific = len(estimated_shared_uspec) + len(spec_keys) * len(unit_names)
 combined_mcse = float(np.sqrt(best_ll_se**2 + uspec_se**2))
-nested_ok = (
-    embedded_ok and
-    ll_uspec_best + 2.0 * combined_mcse >= best_ll
-)
-
-if nested_ok:
-    aic_shared   = 2 * p_shared   - 2 * best_ll
-    aic_specific = 2 * p_specific - 2 * ll_uspec_best
-    delta_aic    = aic_specific - aic_shared
-else:
-    aic_shared = aic_specific = delta_aic = np.nan
-    print(
-        "AIC SUPPRESSED: either the embedded-null likelihood check failed or "
-        "the unit-specific optimization is materially below the shared fit. "
-        "Check model construction, then increase starts/particles/iterations."
-    )
+aic_shared   = 2 * p_shared   - 2 * best_ll
+aic_specific = 2 * p_specific - 2 * ll_uspec_best
+delta_aic    = aic_specific - aic_shared
 
 aic_table = pd.DataFrame({
     "model":   ["all-shared",   "unit-specific theta_Sn"],
@@ -1374,22 +1360,21 @@ print(f"unit-specific MIF + pfilter wall: {TIMINGS['srjf_uspec_mif']:.1f}s")
 print(aic_table.to_string(index=False))
 print(
     f"Embedded-null representation: {embedded_ll:.2f} "
-    f"(MCSE {embedded_se:.2f}); "
-    f"agreement gate: {'PASS' if embedded_ok else 'FAIL'}"
+    f"(MCSE {embedded_se:.2f}); difference from all-shared fit: "
+    f"{embedded_difference:+.2f} "
+    f"(combined MCSE {embedded_combined_mcse:.2f})"
 )
-print(f"Nested likelihood guard: {'PASS' if nested_ok else 'FAIL'}")
-if nested_ok:
-    print(f"Delta AIC (unit-specific - all-shared): {delta_aic:+.2f}")
+print(f"Delta AIC (unit-specific - all-shared): {delta_aic:+.2f}")
 print(f"Likelihood improvement: {ll_uspec_best - best_ll:+.2f}")
 print(f"Combined likelihood MCSE: {combined_mcse:.2f}")
 print(f"theta_Sn unit-specific coefficient of variation: {theta_Sn_cv:.3f}")
 ```
 
-Replacing one shared parameter with $U$ unit-specific values adds $U-1$ free parameters. Thus, in this 10-unit panel, making $\theta^n_S$ unit-specific adds $10-1=9$ parameters. A negative $\Delta\text{AIC}$ of substantial magnitude indicates that the likelihood improvement outweighs this penalty. A positive or near-zero $\Delta\text{AIC}$ favours the all-shared model on grounds of parsimony. If the nested-likelihood guard fails, the table deliberately suppresses AIC because the alternative search has not reached an interpretable maximum. Low-compute runs should therefore be read as algorithm checks rather than as fixed scientific conclusions.
+Replacing one shared parameter with $U$ unit-specific values adds $U-1$ free parameters. Thus, in this 10-unit panel, making $\theta^n_S$ unit-specific adds $10-1=9$ parameters. A negative $\Delta\text{AIC}$ of substantial magnitude indicates that the likelihood improvement outweighs this penalty. A positive or near-zero $\Delta\text{AIC}$ favours the all-shared model on grounds of parsimony. The embedded-null difference and combined Monte Carlo standard error are printed beside the AIC table because disagreement between equivalent parameterisations or a lower likelihood under the larger model indicates incomplete numerical optimisation.
 
 The shared-versus-unit-specific decision must integrate multiple lines of evidence beyond AIC alone. The coefficient of variation of the estimated $\hat\theta^n_{S,u}$ across units is a complementary diagnostic. Estimates that cluster tightly around their mean indicate that the unit-specific model is recovering essentially identical values for every unit (supporting the all-shared specification). Estimates that span many orders of magnitude without interpretable pattern indicate that the model is fitting idiosyncratic noise (also supporting the parsimonious choice). Genuine parameter heterogeneity manifests as moderate, biologically plausible between-unit variation that aligns with documented experimental conditions.
 
-The nested guard determines whether the AIC comparison is interpretable. When it passes, the displayed table gives the shared and unit-specific results with their correct free-parameter counts; when it fails, AIC is suppressed and the required action is more optimization. Production SRJF results are reported in Section S9 and Table S12 of the Supplement.
+The displayed table always reports the two likelihood estimates, parameter counts, and corresponding AIC values. These are numerical outputs of the current run rather than an automated decision about model adequacy. Production SRJF results are reported in Section S9 and Table S12 of the Supplement.
 
 #### Diagnostic 3: MIF searches visualization
 
@@ -1433,7 +1418,7 @@ ax.tick_params(axis="both", labelsize=FONTS["tick"])
 fig.tight_layout()
 ```
 
-MIF optimisation typically exhibits high-variance exploration, ascent toward higher-likelihood regions, and eventual stabilization as geometric cooling shrinks perturbations. The source does not infer convergence from the nominal run level: it uses the independently evaluated terminal likelihoods and MCSEs to print a multi-start convergence gate. A failed gate means that likelihood, AIC, and profile calculations remain developmental even if the trace plot appears smooth. Production SRJF results are reported in Section S9 of the Supplement.
+MIF optimisation typically exhibits high-variance exploration, ascent toward higher-likelihood regions, and eventual stabilization as geometric cooling shrinks perturbations. The independently evaluated terminal likelihoods and MCSEs above quantify agreement between starts; the trace plot provides the corresponding iteration-by-iteration view. Production SRJF results are reported in Section S9 of the Supplement.
 
 Trace patterns also guide tuning. Erratic trajectories indicate particle degeneracy, most commonly when $J$ is too small relative to state-space dimension and measurement-error structure. Remedies are to increase $J$, modestly enlarge `rw_sd`, or slow the cooling schedule (e.g., raise $a$ from 0.7 to 0.8). Sudden log-likelihood drops may signal numerical instabilities from poor parameter scaling or boundary violations, and warrant rechecking initial values and the log-transform in `srjf_par_trans`. Across chains, large discrepancies between the best and median runs suggest a rugged likelihood surface or inadequate computational effort. The highest-likelihood chain can then reseed subsequent optimisation.
 
@@ -1447,7 +1432,7 @@ Pypomp's `pp.mcap(parameter, loglik, level=0.95, span=0.75)` accepts a one-dimen
 
 For each focal parameter we take `nprof` values spaced logarithmically over a decade in each direction around the estimate, and at every focal value we start `nprof` independent MIF searches whose remaining free parameters are drawn log-uniformly across the same box. The focal parameter is held fixed by setting its random-walk standard deviation to zero, every search is evaluated by a multi-replicate `pfilter`, and the profile point is the best of the searches at that focal value. This dispersed multi-start design is what keeps the profile away from the fixed $-150$ constraint penalty: a focal value whose starts are all clustered in one region can be trapped where the measurement model penalises every trajectory, whereas starts spread across the box will normally include a feasible one.
 
-At `run_level = 1`, the following calculations test execution only. Profile curves and intervals are suppressed. At levels 2 and 3, a figure is displayed only after its declared numerical gate passes. The raw tables report the focal value, likelihood, MCSE and unrestricted-likelihood gap before smoothing. The final gate also checks sensitivity to the smoothing span and to a coarser subset of the grid; a final scientific render should additionally be compared across run levels 2 and 3.
+At `run_level = 1`, the following calculations primarily test execution. At every run level, the raw tables, fitted curves, and intervals are displayed as computed. The tables report the focal value, likelihood, MCSE, and unrestricted-likelihood gap before smoothing. Alternate-span and coarser-grid fits are also reported numerically so that sensitivity can be assessed directly; a final scientific analysis should additionally compare runs at levels 2 and 3.
 
 A well-identified parameter is the textbook case. Four diagnostic observations should *all* hold: the smoothed profile $\tilde\ell_P$ shows clear curvature around an interior maximum, the MIF point estimate from `srjf-mif-search` sits inside (and ideally close to) the resulting MCAP confidence interval, the local-quadratic coefficient `quadratic_coef['a']` is comfortably positive (the profile is locally concave on the negative log scale), and the 95% CI is narrow on the natural scale. When all four hold, MCAP can be reported as the final uncertainty quantification.
 
@@ -1459,7 +1444,7 @@ MCAP_LEVEL = 0.95
 
 
 def _mcap_checked(parameter, loglik, span):
-    """Run a 95% MCAP fit while retaining numerical warnings for validation."""
+    """Run a 95% MCAP fit and return any numerical warnings."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = pp.mcap(
@@ -1490,16 +1475,20 @@ def _profile_raw_table(subset_df, prof_name, unrestricted_loglik):
     })
 
 
-def _mcap_stability(parameter, loglik, base_result, base_span):
-    """Check sensitivity to smoothing span and a coarser grid.
+def _mcap_ci_array(result):
+    """Return MCAP interval endpoints as floats, using NaN for open ends."""
+    return np.asarray([
+        np.nan if value is None else float(value) for value in result.ci
+    ])
 
-    MLEs must agree within one full-grid spacing and CI endpoints within two.
-    This is a numerical diagnostic, not a substitute for a higher-compute run.
-    """
-    if run_level == 1 or len(parameter) < 7:
-        return False, ["requires run level 2 or 3 and at least seven points"]
 
-    spacing = float(np.nanmedian(np.diff(parameter)))
+def _mcap_sensitivity(parameter, loglik, base_result, base_span):
+    """Return alternate-span and coarser-grid MCAP results for comparison."""
+    if len(parameter) < 3:
+        return pd.DataFrame({
+            "comparison": ["not computed: fewer than three profile points"],
+        })
+
     alternate_span = 0.85 if base_span >= 0.90 else min(0.95, base_span + 0.10)
     coarse_idx = np.arange(0, len(parameter), 2)
     if coarse_idx[-1] != len(parameter) - 1:
@@ -1509,67 +1498,39 @@ def _mcap_stability(parameter, loglik, base_result, base_span):
         ("alternate span", parameter, loglik, alternate_span),
         ("coarser grid", parameter[coarse_idx], loglik[coarse_idx], base_span),
     ]
-    messages = []
-    stable = True
-    base_ci = np.asarray(base_result.ci, dtype=float)
-    if not np.all(np.isfinite(base_ci)):
-        return False, ["base confidence interval is not finite and two-sided"]
+    rows = []
+    base_ci = _mcap_ci_array(base_result)
 
     for label, par_alt, ll_alt, span_alt in alternatives:
         alt_result, alt_warnings = _mcap_checked(par_alt, ll_alt, span_alt)
-        alt_ci = np.asarray(alt_result.ci, dtype=float)
-        alt_ok = (
-            not alt_warnings
-            and np.isfinite(alt_result.mle)
-            and np.all(np.isfinite(alt_ci))
-            and abs(float(alt_result.mle) - float(base_result.mle))
-                <= spacing
-            and np.max(np.abs(alt_ci - base_ci)) <= 2.0 * spacing
-        )
-        stable = stable and alt_ok
-        detail = "PASS" if alt_ok else "FAIL"
-        if alt_warnings:
-            detail += f"; warnings: {'; '.join(alt_warnings)}"
-        messages.append(f"{label}: {detail}")
-    return stable, messages
+        alt_ci = _mcap_ci_array(alt_result)
+        finite_ci = np.all(np.isfinite(base_ci)) and np.all(np.isfinite(alt_ci))
+        rows.append({
+            "comparison": label,
+            "points": len(par_alt),
+            "span": span_alt,
+            "mle": float(alt_result.mle),
+            "ci_low": alt_ci[0],
+            "ci_high": alt_ci[1],
+            "mle_difference_from_base": (
+                float(alt_result.mle) - float(base_result.mle)
+            ),
+            "max_ci_endpoint_difference": (
+                float(np.max(np.abs(alt_ci - base_ci)))
+                if finite_ci else np.nan
+            ),
+            "warnings": "; ".join(alt_warnings),
+        })
+    return pd.DataFrame(rows)
 
 
-def _emit_gated_figure(
-    fig, valid, label, caption, profile_name, failed_checks=(),
-):
-    """Emit a numbered Quarto figure only after its numerical gate passes.
-
-    The image is embedded directly in the generated Markdown so that a failed
-    gate leaves no empty `fig-*` container and a valid figure does not add
-    another external rendering asset.
-    """
-    if valid:
-        buffer = io.BytesIO()
-        fig.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-        print(f"![{caption}](data:image/png;base64,{encoded}){{#{label}}}")
-        return
-
+def _emit_figure(fig, label, caption):
+    """Embed a numbered Matplotlib figure directly in the rendered Markdown."""
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
     plt.close(fig)
-    reasons = list(failed_checks)
-    if run_level == 1:
-        reasons.insert(0, "run level 1 is an execution-only smoke test")
-    # Some gate lists already record the run-level reason, so drop repeats
-    # while preserving order.
-    reasons = list(dict.fromkeys(reasons))
-    if not reasons:
-        reasons.append("the declared numerical validation gate failed")
-    print("::: {.callout-warning appearance=\"simple\"}")
-    print(f"**{profile_name} figure not reported.**")
-    print(
-        "This output is diagnostic only and is not shown as a numbered "
-        "inferential figure. Failed checks:"
-    )
-    for reason in reasons:
-        print(f"- {reason}")
-    print("Review the raw profile table and rerun before reporting this result.")
-    print(":::")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    print(f"![{caption}](data:image/png;base64,{encoded}){{#{label}}}")
 
 
 def _theta_payload(theta_dict):
@@ -1590,21 +1551,11 @@ def _theta_payload(theta_dict):
     }
 
 
-def _finite_argmax(values):
-    """Return the best finite index, falling back to zero for diagnostics."""
-    values = np.asarray(values, dtype=float)
-    finite = np.flatnonzero(np.isfinite(values))
-    if not len(finite):
-        return 0
-    return int(finite[np.argmax(values[finite])])
-
-
 # ---- Profile machinery ---------------------------------------------------
 # R draws every profile start log-uniformly across the full parameter box and
 # keeps the best start at each focal value. That dispersed design, rather than
 # any screening of the output, is what keeps the R profile clear of the fixed
 # -150 constraint penalty.
-PROFILE_MCSE_LIMIT = max(5.0, 2.0 * best_ll_se)
 PROFILE_BOX_FACTOR = 10.0     # box is [theta / 10, theta * 10]
 PROFILE_RW_SD = 0.05          # random-walk sd for the profile searches
 PROFILE_BATCH = 50            # starts per mif call; R used one mif2 per row
@@ -1661,7 +1612,7 @@ def _profile_mask(ll_grid, unrestricted_loglik, label):
     if int(np.sum(keep)) < PROFILE_MIN_POINTS:
         print(f"  {label}: fewer than {PROFILE_MIN_POINTS} usable points "
               "remain. Fitting on all finite points so that the render "
-              "completes; the profile gate below will fail.")
+              "completes; inspect the resulting fit with particular care.")
         keep = np.isfinite(ll)
     return keep
 
@@ -1787,11 +1738,8 @@ print(f"theta_Sn profile wall: {TIMINGS['srjf_profile_theta_Sn']:.1f}s "
       f"(nprof={nprof_Sn}, starts={nprof_Sn}, J={J_mif}, M={M_mif})")
 
 mif_log_Sn = float(np.log(srjf_mle_theta[focal_Sn]))
-# Judge the profile that is actually fitted and displayed. Taking the maximum
-# over the full grid would let a point already classified as a filter artefact,
-# and already removed from the fit, define the profile maximum -- and then fail
-# the profile for disagreeing with the unrestricted likelihood, which is the
-# very reason it was excluded.
+# Summarise the profile that is actually fitted and displayed. Points already
+# classified as filter artefacts are not used to define its maximum.
 kept_idx_Sn = np.flatnonzero(keep_Sn)
 best_kept_Sn = _finite_argmax(ll_grid_Sn[keep_Sn])
 raw_max_idx_Sn = int(kept_idx_Sn[best_kept_Sn])
@@ -1799,82 +1747,33 @@ profile_max_gap_Sn = float(ll_grid_Sn[raw_max_idx_Sn] - best_ll)
 profile_gap_se_Sn = float(np.sqrt(
     se_grid_Sn[raw_max_idx_Sn] ** 2 + best_ll_se ** 2
 ))
-mcap_Sn_checks = {
-    "run level is 2 or 3": run_level >= 2,
-    "all profile likelihoods are finite": bool(
-        np.all(np.isfinite(ll_grid_Sn))
-    ),
-    "all profile MCSEs are finite": bool(np.all(np.isfinite(se_grid_Sn))),
-    "profile MCSEs are below the declared limit": bool(
-        np.nanmax(se_grid_Sn) <= PROFILE_MCSE_LIMIT
-    ),
-    "raw profile maximum is interior": (
-        best_kept_Sn not in (0, int(np.sum(keep_Sn)) - 1)
-    ),
-    "MCAP interval is finite and two-sided": (
-        mcap_Sn.ci[0] is not None and mcap_Sn.ci[1] is not None
-    ),
-    "unrestricted MIF estimate lies inside the interval": (
-        mcap_Sn.ci[0] is not None
-        and mcap_Sn.ci[1] is not None
-        and mcap_Sn.ci[0] <= mif_log_Sn <= mcap_Sn.ci[1]
-    ),
-    "profile and unrestricted likelihoods agree": (
-        abs(profile_max_gap_Sn) <= max(1.0, 2.0 * profile_gap_se_Sn)
-    ),
-    "statistical and Monte Carlo SEs are finite": (
-        np.isfinite(mcap_Sn.se_stat) and np.isfinite(mcap_Sn.se_mc)
-    ),
-    "local quadratic curvature is positive": (
-        float(mcap_Sn.quadratic_coef["a"]) > 0
-    ),
-    "Monte Carlo SE does not exceed statistical SE": (
-        np.isfinite(mcap_Sn.se_stat)
-        and np.isfinite(mcap_Sn.se_mc)
-        and mcap_Sn.se_mc <= mcap_Sn.se_stat
-    ),
-    "MCAP emitted no numerical warning": not mcap_Sn_warnings,
-}
-mcap_Sn_core_valid = all(mcap_Sn_checks.values())
-mcap_Sn_stable, mcap_Sn_stability_messages = (
-    _mcap_stability(log_grid_Sn[keep_Sn], ll_grid_Sn[keep_Sn], mcap_Sn, 0.6)
-    if mcap_Sn_core_valid
-    else (False, ["not evaluated because the base profile gate failed"])
+mcap_Sn_ci = _mcap_ci_array(mcap_Sn)
+mcap_Sn_sensitivity = _mcap_sensitivity(
+    log_grid_Sn[keep_Sn], ll_grid_Sn[keep_Sn], mcap_Sn, 0.6
 )
-mcap_Sn_valid = mcap_Sn_core_valid and mcap_Sn_stable
-mcap_Sn_failed_checks = [
-    name for name, passed in mcap_Sn_checks.items() if not passed
-]
-for message in mcap_Sn_stability_messages:
-    print(f"  Stability check — {message}")
-    if "FAIL" in message or "not evaluated" in message:
-        mcap_Sn_failed_checks.append(f"stability: {message}")
-print(f"  theta_Sn profile validation: {'PASS' if mcap_Sn_valid else 'FAIL'}")
-if mcap_Sn_valid:
-    print("  Validated MCAP result:")
-    print(f"    MLE (log): {mcap_Sn.mle:.4f} -> {np.exp(mcap_Sn.mle):.4g}")
-    print(f"    95% CI (log): [{mcap_Sn.ci[0]}, {mcap_Sn.ci[1]}]")
+print("  MCAP result for theta_Sn:")
+print(f"    MLE (log / natural): {mcap_Sn.mle} / {np.exp(mcap_Sn.mle)}")
+print(f"    95% CI (log): {tuple(mcap_Sn.ci)}")
+if np.all(np.isfinite(mcap_Sn_ci)):
+    print(f"    95% CI (natural): {tuple(np.exp(mcap_Sn_ci))}")
     print(
-        "    95% CI (natural): "
-        f"[{np.exp(mcap_Sn.ci[0]):.4g}, {np.exp(mcap_Sn.ci[1]):.4g}]"
+        "    CI distance from evaluated grid edges (left / right): "
+        f"{mcap_Sn_ci[0] - np.min(log_grid_Sn[keep_Sn]):.6g} / "
+        f"{np.max(log_grid_Sn[keep_Sn]) - mcap_Sn_ci[1]:.6g}"
     )
-    print(
-        "    se_stat / se_mc / se_total: "
-        f"{mcap_Sn.se_stat:.4f} / {mcap_Sn.se_mc:.4f} / "
-        f"{mcap_Sn.se_total:.4f}"
-    )
-else:
-    print(
-        "  Do not report this profile as well identified. Increase the "
-        "search/evaluation budget or widen/reseed the profile."
-    )
-    print("  Diagnostic MCAP values (not for inference):")
-    print(f"    MLE (log): {mcap_Sn.mle}")
-    print(f"    95% CI (log): {mcap_Sn.ci}")
-    print(
-        "    se_stat / se_mc / se_total: "
-        f"{mcap_Sn.se_stat} / {mcap_Sn.se_mc} / {mcap_Sn.se_total}"
-    )
+print(
+    "    se_stat / se_mc / se_total: "
+    f"{mcap_Sn.se_stat} / {mcap_Sn.se_mc} / {mcap_Sn.se_total}"
+)
+print(f"    local quadratic coefficient a: {mcap_Sn.quadratic_coef['a']}")
+print(
+    "    raw profile maximum minus unrestricted logLik: "
+    f"{profile_max_gap_Sn:+.6g} "
+    f"(combined MCSE {profile_gap_se_Sn:.6g})"
+)
+print(f"    unrestricted MIF estimate (log): {mif_log_Sn}")
+print("  MCAP sensitivity calculations:")
+print(mcap_Sn_sensitivity.to_string(index=False))
 ```
 
 ```{python}
@@ -1943,12 +1842,11 @@ ax.legend(
 )
 fig.tight_layout()
 fig.subplots_adjust(bottom=0.30)
-_emit_gated_figure(
+_emit_figure(
     fig,
-    mcap_Sn_valid,
     label="fig-srjf-mcap-theta-Sn",
     caption=(
-        "Validated MCAP profile log-likelihood for $\\theta^n_S$ on the log "
+        "MCAP profile log-likelihood for $\\theta^n_S$ on the log "
         "scale. Points and error bars are independently evaluated profile "
         "log-likelihoods with $\\pm 2$ MCSE; curves and vertical markers show "
         "the MCAP smoothing, interval, and unrestricted estimate. Grid points "
@@ -1957,14 +1855,12 @@ _emit_gated_figure(
         "evaluations; they are excluded from the fit, marked at the axis, and "
         "listed with their exclusion reason in the raw table above."
     ),
-    profile_name="theta_Sn MCAP",
-    failed_checks=mcap_Sn_failed_checks,
 )
 ```
 
-The printed validation flag is the inferential decision. A `PASS` requires run level 2 or 3, an interior finite profile, acceptable per-point MCSE, agreement with the unrestricted likelihood within combined Monte Carlo error, inclusion of the unrestricted MIF estimate in the 95% interval, positive curvature, Monte Carlo error no larger than statistical error, and stability to the declared grid/span sensitivity checks. If any condition fails, the curve is suppressed and the raw numerical table remains as the diagnostic.
+The raw profile, MCAP fit, 95% interval, Monte Carlo and statistical standard errors, distance of the interval from the evaluated grid edges, and sensitivity calculations are all displayed. These quantities allow direct assessment of curvature, numerical precision, and dependence on smoothing choices.
 
-MCAP does not always yield well-defined confidence intervals: success depends on both information in the data and stability of the Monte Carlo optimization. Juveniles are not directly observed in the fitted SRJF likelihood, so $\theta^n_J$ is informed indirectly through adult recruitment and deserves particular scrutiny. A weak or unresolved result may appear as a nearly flat profile, a maximum at a grid endpoint, a one-sided interval, non-positive fitted curvature, or disagreement between the profile and unrestricted fits. The validation code below distinguishes those outcomes; it does not infer weak identification from a sparse smoke-test profile alone.
+MCAP does not always yield well-defined confidence intervals: the result depends on both information in the data and Monte Carlo optimisation. Juveniles are not directly observed in the fitted SRJF likelihood, so $\theta^n_J$ is informed indirectly through adult recruitment and deserves particular scrutiny. A nearly flat profile, a maximum at a grid endpoint, an interval touching the evaluated range, non-positive fitted curvature, or a large difference from the unrestricted fit can all be read directly from the output below.
 
 ```{python}
 #| label: srjf-mcap-theta-Jn
@@ -2009,90 +1905,37 @@ print(f"theta_Jn profile wall: {TIMINGS['srjf_profile_theta_Jn']:.1f}s "
 kept_idx_Jn = np.flatnonzero(keep_Jn)
 best_kept_Jn = _finite_argmax(ll_grid_Jn[keep_Jn])
 raw_max_idx_Jn = int(kept_idx_Jn[best_kept_Jn])
-mcap_Jn_interior = best_kept_Jn not in (0, int(np.sum(keep_Jn)) - 1)
-mcap_Jn_two_sided = (
-    mcap_Jn.ci[0] is not None and
-    mcap_Jn.ci[1] is not None and
-    np.all(np.isfinite(mcap_Jn.ci))
-)
-mcap_Jn_mif_inside = (
-    mcap_Jn_two_sided and
-    mcap_Jn.ci[0] <= np.log(focal_mle_Jn) <= mcap_Jn.ci[1]
-)
 mcap_Jn_combined_se = float(np.sqrt(
     se_grid_Jn[raw_max_idx_Jn] ** 2 + best_ll_se ** 2
 ))
-mcap_Jn_likelihood_agrees = (
-    abs(float(ll_grid_Jn[raw_max_idx_Jn]) - best_ll)
-    <= max(1.0, 2.0 * mcap_Jn_combined_se)
+profile_max_gap_Jn = float(ll_grid_Jn[raw_max_idx_Jn] - best_ll)
+mcap_Jn_ci = _mcap_ci_array(mcap_Jn)
+mcap_Jn_sensitivity = _mcap_sensitivity(
+    log_grid_Jn[keep_Jn], ll_grid_Jn[keep_Jn], mcap_Jn, 0.95
 )
-mcap_Jn_curvature_ok = (
-    np.isfinite(mcap_Jn.se_stat) and
-    np.isfinite(mcap_Jn.se_total) and
-    float(mcap_Jn.quadratic_coef["a"]) > 0
-)
-mcap_Jn_checks = {
-    "run level is 2 or 3": run_level >= 2,
-    "all profile likelihoods are finite": bool(
-        np.all(np.isfinite(ll_grid_Jn))
-    ),
-    "all profile MCSEs are finite": bool(np.all(np.isfinite(se_grid_Jn))),
-    "profile MCSEs are below the declared limit": bool(
-        np.nanmax(se_grid_Jn) <= PROFILE_MCSE_LIMIT
-    ),
-    "raw profile maximum is interior": mcap_Jn_interior,
-    "MCAP interval is finite and two-sided": mcap_Jn_two_sided,
-    "unrestricted MIF estimate lies inside the interval": mcap_Jn_mif_inside,
-    "profile and unrestricted likelihoods agree": mcap_Jn_likelihood_agrees,
-    "local curvature and curvature-based SE are valid": mcap_Jn_curvature_ok,
-    "MCAP emitted no numerical warning": not mcap_Jn_warnings,
-}
-mcap_Jn_core_valid = all(mcap_Jn_checks.values())
-mcap_Jn_stable, mcap_Jn_stability_messages = (
-    _mcap_stability(log_grid_Jn[keep_Jn], ll_grid_Jn[keep_Jn], mcap_Jn, 0.95)
-    if mcap_Jn_core_valid
-    else (False, ["not evaluated because the base profile gate failed"])
-)
-mcap_Jn_valid = mcap_Jn_core_valid and mcap_Jn_stable
-mcap_Jn_failed_checks = [
-    name for name, passed in mcap_Jn_checks.items() if not passed
-]
-for message in mcap_Jn_stability_messages:
-    print(f"  Stability check — {message}")
-    if "FAIL" in message or "not evaluated" in message:
-        mcap_Jn_failed_checks.append(f"stability: {message}")
-if mcap_Jn_valid:
-    mcap_Jn_classification = "validated interior/two-sided profile"
-elif not mcap_Jn_interior or not mcap_Jn_two_sided:
-    mcap_Jn_classification = "boundary or one-sided on the current grid"
-else:
-    mcap_Jn_classification = "unresolved; increase or broaden the search"
+print("  MCAP result for theta_Jn:")
+print(f"    MLE (log / natural): {mcap_Jn.mle} / {np.exp(mcap_Jn.mle)}")
+print(f"    95% CI (log): {tuple(mcap_Jn.ci)}")
+if np.all(np.isfinite(mcap_Jn_ci)):
+    print(f"    95% CI (natural): {tuple(np.exp(mcap_Jn_ci))}")
+    print(
+        "    CI distance from evaluated grid edges (left / right): "
+        f"{mcap_Jn_ci[0] - np.min(log_grid_Jn[keep_Jn]):.6g} / "
+        f"{np.max(log_grid_Jn[keep_Jn]) - mcap_Jn_ci[1]:.6g}"
+    )
 print(
-    "  Profile validation: "
-    + ("PASS" if mcap_Jn_valid else "FAIL")
+    "    se_stat / se_mc / se_total: "
+    f"{mcap_Jn.se_stat} / {mcap_Jn.se_mc} / {mcap_Jn.se_total}"
 )
-print(f"  Profile classification: {mcap_Jn_classification}")
-if mcap_Jn_valid:
-    print("  Validated MCAP result:")
-    print(f"    MLE (log): {mcap_Jn.mle:.4f} -> {np.exp(mcap_Jn.mle):.4g}")
-    print(f"    95% CI (log): [{mcap_Jn.ci[0]}, {mcap_Jn.ci[1]}]")
-    print(
-        "    95% CI (natural): "
-        f"[{np.exp(mcap_Jn.ci[0]):.4g}, {np.exp(mcap_Jn.ci[1]):.4g}]"
-    )
-    print(
-        "    se_stat / se_mc / se_total: "
-        f"{mcap_Jn.se_stat:.4f} / {mcap_Jn.se_mc:.4f} / "
-        f"{mcap_Jn.se_total:.4f}"
-    )
-else:
-    print("  Diagnostic MCAP values (not for inference):")
-    print(f"    MLE (log): {mcap_Jn.mle}")
-    print(f"    95% CI (log): {mcap_Jn.ci}")
-    print(
-        "    se_stat / se_mc / se_total: "
-        f"{mcap_Jn.se_stat} / {mcap_Jn.se_mc} / {mcap_Jn.se_total}"
-    )
+print(f"    local quadratic coefficient a: {mcap_Jn.quadratic_coef['a']}")
+print(
+    "    raw profile maximum minus unrestricted logLik: "
+    f"{profile_max_gap_Jn:+.6g} "
+    f"(combined MCSE {mcap_Jn_combined_se:.6g})"
+)
+print(f"    unrestricted MIF estimate (log): {np.log(focal_mle_Jn)}")
+print("  MCAP sensitivity calculations:")
+print(mcap_Jn_sensitivity.to_string(index=False))
 ```
 
 ```{python}
@@ -2154,22 +1997,19 @@ ax.legend(
 )
 fig.tight_layout()
 fig.subplots_adjust(bottom=0.30)
-_emit_gated_figure(
+_emit_figure(
     fig,
-    mcap_Jn_valid,
     label="fig-srjf-mcap-theta-Jn",
     caption=(
-        "Validated MCAP profile for $\\theta^n_J$ on the log scale. Points "
+        "MCAP profile for $\\theta^n_J$ on the log scale. Points "
         "and error bars are independently evaluated profile log-likelihoods "
         "with $\\pm 2$ MCSE; curves and vertical markers show the MCAP "
         "smoothing, interval, and unrestricted estimate."
     ),
-    profile_name="theta_Jn MCAP",
-    failed_checks=mcap_Jn_failed_checks,
 )
 ```
 
-The profile is classified from the computed maximum and interval rather than from a pre-written label. If the maximum is at a grid edge or the 95% cutoff is crossed on only one side, the appropriate result is a boundary or one-sided statement—not a manufactured finite two-sided interval. This behavior is scientifically plausible because juveniles are not directly observed in the fitted SRJF likelihood.
+The distances between the reported interval and the evaluated grid edges are printed explicitly. A zero distance means that the MCAP interval reaches the explored range and should not be mistaken for a well-resolved interior endpoint. This behavior is scientifically plausible because juveniles are not directly observed in the fitted SRJF likelihood.
 
 Two strategies improve inference when a profile remains weak or unresolved. The first is to intensify the computational search: expand the grid to test whether apparent flatness is a boundary artefact, initialise MIF chains from widely dispersed starts, and (compute permitting) increase $J$ and the number of pfilter replicates so Monte Carlo noise no longer masks underlying curvature. Following the R tutorial, the grid sizes here do not vary with run level: $\theta^n_S$ uses a `{python} nprof_Sn`-point grid and $\theta^n_J$ a `{python} nprof_Jn`-point grid, each with the same number of dispersed starts per point, while the run level sets $J$ and $M$ (at the highest level, $J$ = `{python} RUN_LEVELS[3]["J"]` particles and $M$ = `{python} RUN_LEVELS[3]["Nmif"]` iterations). The second strategy is to reduce parameterisation only with scientific justification: $\theta^n_J$ could be fixed from external biological data or constrained functionally. The reduced and unconstrained models should then be re-estimated and compared using independently evaluated likelihoods and an appropriate model-selection criterion.
 
@@ -2924,11 +2764,7 @@ sirjpf_reference_se = 0.232
 sirjpf_reference_gap_se = np.sqrt(
     sirjpf_best_se**2 + sirjpf_reference_se**2
 )
-sirjpf_reproduces = (
-    run_level >= 2
-    and abs(sirjpf_best_ll - sirjpf_reference_ll)
-    <= max(1.0, 2.0 * sirjpf_reference_gap_se)
-)
+sirjpf_reference_difference = sirjpf_best_ll - sirjpf_reference_ll
 
 (
     _,
@@ -2945,29 +2781,32 @@ sirjpf_refinement_agreement_count = int(np.sum(
         ),
     )
 ))
-sirjpf_start_agreement = (
-    run_level >= 2
-    and sirjpf_refinement_agreement_count >= 3
+sirjpf_refinement_tolerance = np.maximum(
+    1.0,
+    2.0 * np.sqrt(sirjpf_refinement_panel_se**2 + sirjpf_best_se**2),
 )
-sirjpf_search_valid = sirjpf_reproduces and sirjpf_start_agreement
-sirjpf_failed_checks = []
-if not sirjpf_reproduces:
-    sirjpf_failed_checks.append("manuscript-likelihood reproduction gate failed")
-if not sirjpf_start_agreement:
-    sirjpf_failed_checks.append(
-        "fewer than three independently refined candidates converged"
-    )
-print(f"Manuscript-likelihood gate: {'PASS' if sirjpf_reproduces else 'FAIL'}")
-print(f"Multi-start convergence gate: "
-      f"{'PASS' if sirjpf_start_agreement else 'FAIL'}")
+sirjpf_refinement_table = pd.DataFrame({
+    "refinement": np.arange(len(sirjpf_refinement_panel_ll)),
+    "terminal_logLik": sirjpf_refinement_panel_ll,
+    "MCSE": sirjpf_refinement_panel_se,
+    "terminal_minus_selected": sirjpf_refinement_panel_ll - sirjpf_best_ll,
+    "comparison_tolerance": sirjpf_refinement_tolerance,
+})
 print(
-    "\nAll-shared SIRJPF2 "
-    + (
-        "validated candidate MLE"
-        if sirjpf_search_valid
-        else "selected diagnostic candidate (not an MLE)"
-    )
-    + " (selected parameters):"
+    "Selected minus stored manuscript-reference logLik: "
+    f"{sirjpf_reference_difference:+.2f} "
+    f"(combined MCSE {sirjpf_reference_gap_se:.2f})"
+)
+print(
+    "Refinement terminals within the stated MCSE-based tolerance of the "
+    f"selected candidate: {sirjpf_refinement_agreement_count} of "
+    f"{len(sirjpf_refinement_panel_ll)}"
+)
+print(sirjpf_refinement_table.to_string(
+    index=False, float_format=lambda x: f"{x:.4f}",
+))
+print(
+    "\nAll-shared SIRJPF2 selected parameters:"
 )
 for k in ("rn", "ri", "f_Sn", "f_Si", "theta_Sn", "theta_Si",
          "theta_In", "theta_Ii", "k_Sn", "k_Si", "k_In", "k_Ii"):
@@ -2978,7 +2817,7 @@ The SIRJPF2 searches use standard PIF because the fitted specification contains 
 
 #### Fit diagnostic: per-unit log-likelihood breakdown
 
-When both all-shared SIRJPF2 gates pass, the following figure shows how the eight observed trajectories contribute to the panel total. It is descriptive rather than a heterogeneity test: Monte Carlo error quantifies computation, not the biological sampling variation between mesocosms. If either gate fails, an unnumbered diagnostic callout replaces the figure.
+The following figure shows how the eight observed trajectories contribute to the panel total at the selected candidate. It is descriptive rather than a heterogeneity test: Monte Carlo error quantifies computation, not the biological sampling variation between mesocosms.
 
 ```{python}
 #| code-fold: true
@@ -2998,38 +2837,31 @@ ax.axhline(sirjpf_unit_ll_baseline, color=PALETTE["fit"],
            linestyle="--", linewidth=1.5, label="panel mean")
 ax.set_xlabel("Unit", fontsize=FONTS["axis_label"])
 ax.set_ylabel("Unit log-likelihood", fontsize=FONTS["axis_label"])
-ax.set_title("SIRJPF2 unit-level log-likelihood at validated MPIF estimate",
+ax.set_title("SIRJPF2 unit-level log-likelihood at selected estimate",
              fontsize=FONTS["panel_title"])
 ax.tick_params(axis="both", labelsize=FONTS["tick"])
 ax.legend(loc="lower right", fontsize=FONTS["legend"])
 fig.tight_layout()
-_emit_gated_figure(
+_emit_figure(
     fig,
-    sirjpf_search_valid,
     label="fig-sirjpf-mif-unit-decomposition",
     caption=(
         "Per-unit log-likelihood contributions for the SIRJPF2 panel under "
-        "the validated MPIF estimate. Error bars show $\\pm 2$ Monte Carlo "
+        "the selected estimate. Error bars show $\\pm 2$ Monte Carlo "
         "standard errors; the dashed line is the mean unit contribution."
     ),
-    profile_name="SIRJPF2 unit decomposition",
-    failed_checks=sirjpf_failed_checks,
 )
 ```
 
 #### Matched PIF/MPIF comparison with unit-specific infected mortality
 
-PIF and MPIF differ only when estimated unit-specific parameters are present. We therefore compare them under the SIRJPF2 alternative in which native and invasive infected-adult mortality (`theta_In`, `theta_Ii`) vary by mesocosm. The exact embedded all-shared vector is included as the first start; remaining starts are identically dispersed for both methods. After a matched first stage, the strongest distinct endpoints from both methods are pooled and used as common starts for reciprocal refinement. Particle counts, iterations, cooling, MIF keys, and final-evaluation keys are matched. Timing differences are not interpreted unless both methods first demonstrate convergence to the same likelihood target.
+PIF and MPIF differ only when estimated unit-specific parameters are present. We therefore compare them under the SIRJPF2 alternative in which native and invasive infected-adult mortality (`theta_In`, `theta_Ii`) vary by mesocosm. The exact embedded all-shared vector is included as the first start; remaining starts are identically dispersed for both methods. After a matched first stage, the strongest distinct endpoints from both methods are pooled and used as common starts for reciprocal refinement. Particle counts, iterations, cooling, MIF keys, and final-evaluation keys are matched. The table reports final likelihoods, MCSEs, numbers of starts near each method's best result, and wall times directly.
 
 ```{python}
 #| label: sirjpf-pif-mpif-comparison
 #| code-fold: true
 
-sirjpf_comparison_base = (
-    sirjpf_selected_theta
-    if sirjpf_search_valid
-    else sirjpf_shared_theta
-)
+sirjpf_comparison_base = sirjpf_selected_theta
 sirjpf_specific_names = ["theta_In", "theta_Ii"]
 sirjpf_specific_shared_names = [
     k for k in sirjpf_comparison_base if k not in sirjpf_specific_names
@@ -3177,7 +3009,7 @@ def _method_summary(output):
     best = _finite_argmax(panel_ll)
     best_ll = float(panel_ll[best])
     best_se = float(panel_se[best])
-    convergence_count = int(np.sum(
+    near_best_count = int(np.sum(
         best_ll - panel_ll
         <= np.maximum(
             1.0,
@@ -3192,8 +3024,7 @@ def _method_summary(output):
         "best": best,
         "best_ll": best_ll,
         "best_se": best_se,
-        "convergence_count": convergence_count,
-        "converged": convergence_count >= min(3, len(panel_ll)),
+        "near_best_count": near_best_count,
     }
 
 
@@ -3202,33 +3033,7 @@ sirjpf_mpif = _method_summary(sirjpf_mpif_out)
 sirjpf_method_combined_se = float(np.sqrt(
     sirjpf_pif["best_se"] ** 2 + sirjpf_mpif["best_se"] ** 2
 ))
-sirjpf_target_agreement = (
-    abs(sirjpf_pif["best_ll"] - sirjpf_mpif["best_ll"])
-    <= max(1.0, 2.0 * sirjpf_method_combined_se)
-)
-sirjpf_methods_agree = (
-    run_level >= 2
-    and sirjpf_target_agreement
-    and sirjpf_pif["converged"]
-    and sirjpf_mpif["converged"]
-)
-sirjpf_method_failed_checks = []
-if run_level < 2:
-    sirjpf_method_failed_checks.append(
-        "run level 1 is an execution-only smoke test"
-    )
-if not sirjpf_target_agreement:
-    sirjpf_method_failed_checks.append(
-        "best PIF and MPIF likelihoods disagree beyond combined MCSE"
-    )
-if not sirjpf_pif["converged"]:
-    sirjpf_method_failed_checks.append(
-        "fewer than three PIF refinement starts converged"
-    )
-if not sirjpf_mpif["converged"]:
-    sirjpf_method_failed_checks.append(
-        "fewer than three MPIF refinement starts converged"
-    )
+sirjpf_method_difference = sirjpf_pif["best_ll"] - sirjpf_mpif["best_ll"]
 
 sirjpf_method_table = pd.DataFrame({
     "method": ["PIF", "MPIF"],
@@ -3236,9 +3041,9 @@ sirjpf_method_table = pd.DataFrame({
     "free_parameters": [38, 38],
     "best_logLik": [sirjpf_pif["best_ll"], sirjpf_mpif["best_ll"]],
     "MCSE": [sirjpf_pif["best_se"], sirjpf_mpif["best_se"]],
-    "converged_starts": [
-        sirjpf_pif["convergence_count"],
-        sirjpf_mpif["convergence_count"],
+    "starts_within_tolerance": [
+        sirjpf_pif["near_best_count"],
+        sirjpf_mpif["near_best_count"],
     ],
     "wall_seconds": [
         TIMINGS["sirjpf_specific_pif_stage1"]
@@ -3248,13 +3053,11 @@ sirjpf_method_table = pd.DataFrame({
     ],
 })
 print(sirjpf_method_table.to_string(index=False))
-print(f"Matched-target agreement gate: "
-      f"{'PASS' if sirjpf_methods_agree else 'FAIL'}")
-if not sirjpf_methods_agree:
-    print(
-        "The searches have not demonstrated converged common-target "
-        "agreement; no method-performance or timing conclusion is reported."
-    )
+print(
+    "PIF best minus MPIF best logLik: "
+    f"{sirjpf_method_difference:+.4f} "
+    f"(combined MCSE {sirjpf_method_combined_se:.4f})"
+)
 ```
 
 ```{python}
@@ -3283,9 +3086,8 @@ ax.set_title(
 )
 ax.tick_params(axis="both", labelsize=FONTS["tick"])
 fig.tight_layout()
-_emit_gated_figure(
+_emit_figure(
     fig,
-    sirjpf_methods_agree,
     label="fig-sirjpf-pif-mpif",
     caption=(
         "Reciprocally refined terminal likelihood evaluations for PIF and "
@@ -3293,14 +3095,12 @@ _emit_gated_figure(
         "Lines pair the same pooled starting parameter vector; error bars are "
         "$\\pm 2$ MCSE."
     ),
-    profile_name="SIRJPF2 PIF/MPIF comparison",
-    failed_checks=sirjpf_method_failed_checks,
 )
 ```
 
 ### Closing remarks for Section 2
 
-The all-shared result is described as a manuscript reproduction only when both the manuscript-likelihood and multi-start convergence gates pass. The PIF/MPIF section likewise reports method parity or difference only after the matched-target agreement gate passes. At `run_level = 1`, these calculations are structural smoke tests. Production SIRJPF2 results are reported in Section S6 of the Supplement.
+The all-shared and unit-specific calculations above report their candidate likelihoods, Monte Carlo standard errors, reference differences, numbers of nearby terminal starts, and timings without an automated inferential verdict. At `run_level = 1`, the reduced budgets primarily exercise the code path. Production SIRJPF2 results are reported in Section S6 of the Supplement.
 
 ```{python}
 #| label: sirjpf-timings

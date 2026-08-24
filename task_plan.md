@@ -1,10 +1,10 @@
-# Task Plan: Repair advanced Daphnia tutorial validation
+# Task Plan: Simplify advanced Daphnia tutorial reporting
 
 ## Goal
-Produce a staged, evidence-based plan that makes the advanced tutorial numerically trustworthy, scientifically comparable to the R and regular Python tutorials, and reproducibly publishable.
+Revise the advanced tutorial so it always displays computed numerical results and figures, without PASS/FAIL gates, result suppression, or automated inferential verdicts, while retaining genuine runtime and data-integrity checks.
 
 ## Current Phase
-Phase 1 advanced-QMD corrections complete; cluster rerender not started.
+Phase 6 transparent-reporting revision complete.
 
 ## Phases
 
@@ -42,6 +42,15 @@ Phase 1 advanced-QMD corrections complete; cluster rerender not started.
 - [ ] Correct README claims and add tests for precision, confidence level, and gate semantics.
 - **Status:** pending
 
+### Phase 6: Replace gates with transparent reporting
+- [x] Inventory every gate, fallback, suppression branch, and gated figure.
+- [x] Always retain and report the computed SRJF optimizer result; print reference differences and convergence counts without verdicts.
+- [x] Always report SRJF AIC and MCAP results, sensitivity comparisons, and figures.
+- [x] Replace PASS/FAIL prose with neutral numerical diagnostics.
+- [x] Preserve runtime guards for genuine configuration, file, version, x64, and non-finite-input errors.
+- [x] Compile every Python chunk and run the level-1 structural smoke test.
+- **Status:** complete
+
 ## Decisions Made
 
 | Decision | Rationale |
@@ -52,6 +61,7 @@ Phase 1 advanced-QMD corrections complete; cluster rerender not started.
 | Use 95% confidence intervals exclusively | This is the user's inferential requirement and must be identical in base and sensitivity fits. |
 | Make the document name a wrapper argument | ResearchGrid batch submission may not preserve environment prefixes reliably. |
 | Modify only the advanced QMD in this implementation turn | The user requested modification of the singular attached QMD; generated HTML and cluster wrappers remain untouched. |
+| Show computed results regardless of diagnostic quality | The user will assess numerical quality manually and does not want automated publication gates or AI-styled verdict language. |
 
 ## Errors Encountered
 
