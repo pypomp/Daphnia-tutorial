@@ -50,26 +50,26 @@ affiliations:
 #| echo: false
 import os
 
-# User-tunable switches at the top of the document.
-# `use_gpu` toggles the JAX backend; `run_level` selects compute budget.
-use_gpu = os.getenv("DAPHNIA_USE_GPU", "0") == "1"
-run_level = int(os.getenv("DAPHNIA_RUN_LEVEL", "1"))
+# User-tunable switches. The scientific workflow is GPU-only. `use_CPU`
+# controls a separate, optional benchmark and is false for the present run.
+use_gpu = os.getenv("DAPHNIA_USE_GPU", "1") == "1"
+use_CPU = os.getenv("DAPHNIA_USE_CPU", "0") == "1"
+double_precision = os.getenv("DAPHNIA_DOUBLE_PRECISION", "1") == "1"
+run_level = int(os.getenv("DAPHNIA_RUN_LEVEL", "2"))
 if run_level not in (1, 2, 3):
     raise ValueError("DAPHNIA_RUN_LEVEL must be 1, 2, or 3")
+if not use_gpu:
+    raise RuntimeError(
+        "This advanced tutorial requires a CUDA GPU. Set DAPHNIA_USE_GPU=1."
+    )
 
 # JAX_PLATFORMS must be set BEFORE importing jax. Once jax initialises a
 # backend (e.g., Metal on Apple silicon), jax.config.update('jax_platform_name', ...)
 # is a silent no-op, which is why the assignment below precedes `import jax`.
 # See quality_reports/audits/PYPOMP_CAPABILITY.md.
-if not use_gpu:
-    os.environ["JAX_PLATFORMS"] = "cpu"
-
-# The negative-binomial log likelihood is not numerically reliable in JAX's
-# default single precision for this model. In particular, the difference of
-# large gammaln terms can cancel catastrophically and produce spuriously high
-# likelihoods that a multi-start profile will preferentially select. Set x64
-# before importing JAX and verify it immediately afterwards.
-os.environ["JAX_ENABLE_X64"] = "1"
+# `double_precision` is set before importing JAX so that it controls the
+# numerical precision used throughout the document.
+os.environ["JAX_ENABLE_X64"] = "1" if double_precision else "0"
 
 import time
 import base64
@@ -88,28 +88,41 @@ import matplotlib.pyplot as plt
 
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 
 import pypomp as pp
 from pypomp.maths import logmeanexp, logmeanexp_se
 
-if not jax.config.jax_enable_x64:
-    raise RuntimeError("JAX_ENABLE_X64 must be set before jax is imported")
+if jax.default_backend() != "gpu":
+    raise RuntimeError(
+        "No CUDA GPU backend is active. This render will not fall back to CPU."
+    )
+if bool(jax.config.jax_enable_x64) != double_precision:
+    raise RuntimeError("The requested JAX precision was not applied before import")
 
 RUN_LEVELS = {
     1: {
-        "J": 20, "J_eval": 50, "Nmif": 5, "nprof": 5,
-        "n_starts": 2, "pf_reps": 3,
-    },  # structural / smoke test
+        "J": 50, "J_eval": 50, "Nmif": 2,
+        "n_starts": 3, "pf_reps": 2,
+    },  # rapid prototype
     2: {
-        "J": 1000, "J_eval": 1500, "Nmif": 50, "nprof": 11,
-        "n_starts": 5, "pf_reps": 10,
-    },  # validation
+        "J": 500, "J_eval": 600, "Nmif": 320,
+        "n_starts": 9, "pf_reps": 10,
+    },  # tutorial analysis
     3: {
-        "J": 2000, "J_eval": 4000, "Nmif": 100, "nprof": 21,
-        "n_starts": 10, "pf_reps": 20,
-    },  # high-compute candidate reproduction
+        "J": 1000, "J_eval": 1000, "Nmif": 250,
+        "n_starts": 18, "pf_reps": 20,
+    },  # production analysis
 }
-RL = RUN_LEVELS[run_level]
+RL_SRJF = RUN_LEVELS[run_level]
+
+SIRJPF_RUN_LEVELS = {
+    1: {"J": 50, "J_eval": 50, "Nmif": 2, "pf_reps": 2},
+    2: {"J": 500, "J_eval": 500, "Nmif": 300, "pf_reps": 10},
+    3: {"J": 1000, "J_eval": 1000, "Nmif": 250, "pf_reps": 10},
+}
+RL_SIRJPF = {**RL_SRJF, **SIRJPF_RUN_LEVELS[run_level]}
+RL = {"SRJF": RL_SRJF, "SIRJPF2": RL_SIRJPF}
 
 
 def summarize_panel_loglik(logliks):
@@ -127,21 +140,29 @@ def summarize_panel_loglik(logliks):
     return unit_ll, unit_se, panel_ll, panel_se
 
 
-def make_panel_starts(
-    shared_df, unit_specific_df, n_starts, seed, fixed=(), jitter_sd=0.15,
+def make_quality_panel_starts(
+    shared_df, unit_specific_df, seed, fixed=(), qualities=None,
 ):
-    """Create one exact start plus reproducibly dispersed positive starts."""
+    """Create reproducible good, medium, and poor positive starts."""
     rng = np.random.default_rng(seed)
+    qualities = list(qualities or ("good", "medium", "poor"))
+    jitter_by_quality = {"good": 0.08, "medium": 0.45, "poor": 1.0}
     starts = []
     fixed = set(fixed)
-    for i in range(n_starts):
+    for i, quality in enumerate(qualities):
+        if quality not in jitter_by_quality:
+            raise ValueError(f"Unknown start quality: {quality}")
+        jitter_sd = (
+            0.0 if i == 0 and quality == "good"
+            else jitter_by_quality[quality]
+        )
         shared_i = shared_df.copy(deep=True)
         unit_i = (
             None
             if unit_specific_df is None
             else unit_specific_df.copy(deep=True)
         )
-        if i > 0:
+        if jitter_sd > 0:
             for name in shared_i.index:
                 if name not in fixed and float(shared_i.loc[name, "shared"]) > 0:
                     shared_i.loc[name, "shared"] *= np.exp(
@@ -159,7 +180,15 @@ def make_panel_starts(
                             )
                         )
         starts.append({"shared": shared_i, "unit_specific": unit_i})
-    return pp.PanelParameters(starts)
+    return pp.PanelParameters(starts), qualities
+
+
+def start_quality_schedule(n_starts):
+    """Return one good start followed by balanced medium and poor starts."""
+    if n_starts < 3:
+        raise ValueError("At least three starts are needed for this comparison")
+    labels = ["good", "medium", "poor"]
+    return [labels[i % len(labels)] for i in range(n_starts)]
 
 
 def _sha256_file(path):
@@ -193,7 +222,7 @@ def _git_commit(path):
 # the model contract, numerical precision, or the run-level configuration
 # changes. Payloads from older cache schemas are deliberately ignored.
 MODEL_CONTRACT_VERSION = "daphnia-production-2026-07-16"
-CACHE_SCHEMA_VERSION = "daphnia-qmd-cache-v5"
+CACHE_SCHEMA_VERSION = "daphnia-qmd-cache-v6"
 EXPECTED_PYPOMP_VERSION = "0.4.6.0"
 EXPECTED_PYPOMP_COMMIT = "ed95e3bd46c1cc188fc8f7d83e89c6d5035b977c"
 QMD_PATH = _find_existing_path(
@@ -217,6 +246,8 @@ CACHE_METADATA = {
     "pandas": pd.__version__,
     "backend": jax.default_backend(),
     "jax_enable_x64": bool(jax.config.jax_enable_x64),
+    "double_precision": double_precision,
+    "use_CPU": use_CPU,
     "run_level": run_level,
     "run_config": RL,
 }
@@ -315,10 +346,6 @@ FONTS = {
 
 This tutorial guides readers through implementation, using the Python package [`pypomp`](https://github.com/pypomp), of the methodology presented by the article, *Mechanistic models for panel data: Analysis of ecological experiments with four interacting species*, <https://arxiv.org/abs/2506.04508>.
 
-### Status
-
-This tutorial extends the peer-reviewed article but is not itself peer-reviewed. It provides additional description of implementation details and data-analysis considerations that arose during the reported research. This tutorial is an accessory intended to support understanding and reproducibility.
-
 ## Introduction
 
 Ecological experiments often yield panel time series data, wherein multiple trajectories are observed across replicated experimental units. These replicates may exhibit correlation through shared parameters governing the underlying stochastic processes. This tutorial demonstrates the construction, estimation, and validation of mechanistic models for panel data using the partially observed Markov process (POMP) framework. Specifically, we focus on PanelPOMP models, which extend single-unit POMP models to collections of related but independent stochastic processes linked through common parameters.
@@ -331,13 +358,13 @@ We also evaluate competing model specifications using Akaike's Information Crite
 
 Finally, we evaluate models through multiple diagnostic approaches. Unit-level log-likelihood contributions help identify experimental units that are poorly described by a shared parameter vector, while simulation-based and convergence diagnostics assess numerical and model adequacy.
 
-We demonstrate the complete PanelPOMP workflow using two models of increasing complexity. Section 1 presents the SRJF model (Susceptible-Removed-Juvenile-Food), which describes single-species dynamics of *D. dentifera* in the absence of parasites. Section 2 extends this framework to the SIRJPF2 model (Susceptible-Infected-Removed-Juvenile-Parasite-Food-2species), incorporating parasite transmission, disease dynamics, and interspecific competition. Across the tutorial, we demonstrate parameter estimation via PIF and, for a model containing unit-specific parameters, MPIF; uncertainty quantification via MCAP; model comparison via AIC; and model validation through simulation-based diagnostics.
+We demonstrate the complete PanelPOMP workflow using two models of increasing complexity. Section 1 presents the SRJF model (Susceptible-Removed-Juvenile-Food), which describes single-species dynamics of *D. dentifera* in the absence of parasites. Section 2 extends this framework to the SIRJPF2 model (Susceptible-Infected-Removed-Juvenile-Parasite-Food-2species), incorporating parasite transmission, disease dynamics, and interspecific competition. Across the tutorial, we demonstrate parameter estimation via PIF and, for a model containing unit-specific parameters, MPIF. We then demonstrate uncertainty quantification via MCAP, model comparison via AIC, and model validation through simulation-based diagnostics.
 
-### CPU and GPU execution
+### GPU execution and numerical precision
 
-Pypomp uses JAX and can execute on either a CPU or an available accelerator. For simplicity this tutorial uses a GPU for the whole workflow; CPU execution remains available by leaving `DAPHNIA_USE_GPU=0`, but no CPU render of this document has been made and no speedup is claimed here, because a matched benchmark is not part of the tutorial. The per-section wall times reported below were all measured on one NVIDIA A40.
+This tutorial runs on a CUDA GPU and does not fall back to CPU computation. The calculations shown here use an NVIDIA A100. Float64 is required because the negative-binomial likelihood contains differences of large `gammaln` terms that may lose substantial accuracy in float32. The `double_precision` switch is therefore `True` by default. Setting `DAPHNIA_DOUBLE_PRECISION=0` selects float32 for the complete document, including estimation, profiles, and diagnostics. A full float32 and float64 comparison must use separate render processes because JAX compilation and arrays retain the precision state in which they were created. The float32 artifact is diagnostic only. The final and subsequent standard renders use float64.
 
-Four implementation details had to be resolved before the GPU path was scientifically usable. `JAX_PLATFORMS` must be set before `import jax`: once a backend has initialised, `jax.config.update("jax_platform_name", ...)` is a silent no-op, which is why the assignment precedes the import in the setup chunk. The cluster wrapper originally requested a GPU node without setting `DAPHNIA_USE_GPU=1`, so JAX was forced onto the CPU on a GPU allocation. The particle filter also requires double precision: in single precision the negative-binomial `gammaln` difference can cancel catastrophically and produce spuriously high likelihoods, so the setup forces `JAX_ENABLE_X64=1` before importing JAX and stops if x64 is unavailable. On a shared card, `XLA_PYTHON_CLIENT_PREALLOCATE=false` together with `XLA_PYTHON_CLIENT_ALLOCATOR=platform` stops JAX reserving the whole device. Separately, Quarto exhausts memory while embedding resources on the cluster, so the wrapper renders with external images and inlines them afterwards. The JAX backend and precision mode are both part of the cache fingerprint, so CPU/GPU or float32/float64 results cannot be silently interchanged.
+The active run uses `run_level = 2`. The object `RL` contains the corresponding particle counts, MIF iterations, independent starts, and likelihood-evaluation replicates. Level 1 is a rapid prototype, level 2 is the tutorial analysis, and level 3 uses the production settings from the R and regular Python tutorials.
 
 ```{python}
 #| label: print-setup
@@ -345,17 +372,100 @@ Four implementation details had to be resolved before the GPU path was scientifi
 #| echo: false
 print(f"run_level = {run_level}")
 print(f"RL = {RL}")
-print(f"Python: {platform.python_version()}")
-print(f"Pypomp: {pp.__version__}")
-print(f"Pypomp source: {Path(pp.__file__).resolve()}")
-print(f"Pypomp commit: {CACHE_METADATA['pypomp_commit']}")
-print(f"JAX: {jax.__version__}; NumPy: {np.__version__}; "
-      f"Pandas: {pd.__version__}")
-print(f"JAX backend: {jax.default_backend()}")
-print(f"JAX x64 enabled: {bool(jax.config.jax_enable_x64)}")
-print(f"Host: {platform.node()}; ResearchGrid job: "
-      f"{os.getenv('JOB_ID', 'interactive/not submitted')}")
-print(f"Cache fingerprint: {CACHE_FINGERPRINT}")
+```
+
+The following calculation evaluates the same negative-binomial log likelihood in float32 and float64 on the active GPU. The difference is numerical rather than statistical. A material discrepancy indicates that float32 is unsuitable for this likelihood calculation.
+
+```{python}
+#| label: precision-comparison
+#| code-fold: true
+#| echo: false
+
+def _negative_binomial_loglik(y, mu, size, dtype):
+    y = jnp.asarray(y, dtype=dtype)
+    mu = jnp.asarray(mu, dtype=dtype)
+    size = jnp.asarray(size, dtype=dtype)
+    return (
+        jsp.special.gammaln(y + size)
+        - jsp.special.gammaln(size)
+        - jsp.special.gammaln(y + 1)
+        + size * jnp.log(size / (size + mu))
+        + y * jnp.log(mu / (size + mu))
+    )
+
+
+precision_example = {"count": 10_000_000, "mean": 9_900_000, "size": 25}
+active_precision = "float64" if double_precision else "float32"
+print(f"Complete tutorial precision: {active_precision}")
+ll_float32 = float(_negative_binomial_loglik(
+    precision_example["count"], precision_example["mean"],
+    precision_example["size"], jnp.float32,
+))
+if jax.config.jax_enable_x64:
+    ll_float64 = float(_negative_binomial_loglik(
+        precision_example["count"], precision_example["mean"],
+        precision_example["size"], jnp.float64,
+    ))
+    precision_table = pd.DataFrame({
+        "precision": ["float32", "float64"],
+        "log_likelihood": [ll_float32, ll_float64],
+        "difference_from_float64": [ll_float32 - ll_float64, 0.0],
+    })
+else:
+    precision_table = pd.DataFrame({
+        "precision": ["float32"],
+        "log_likelihood": [ll_float32],
+        "difference_from_float64": [np.nan],
+    })
+print(precision_table.to_string(index=False, float_format=lambda x: f"{x:.8g}"))
+```
+
+```{python}
+#| label: optional-cpu-comparison
+#| echo: false
+#| output: asis
+
+# This block produces no output and performs no CPU computation unless the
+# user explicitly sets DAPHNIA_USE_CPU=1. It is intentionally separate from
+# the GPU-only scientific workflow.
+if use_CPU:
+    cpu_code = r'''\
+import json, time
+import jax
+import jax.numpy as jnp
+x = jnp.linspace(0.1, 10.0, 2_000_000, dtype=jnp.float64)
+kernel = jax.jit(lambda z: jnp.sum(jnp.log1p(z) + jnp.sqrt(z)))
+kernel(x).block_until_ready()
+t0 = time.perf_counter()
+kernel(x).block_until_ready()
+print(json.dumps({"seconds": time.perf_counter() - t0}))
+'''
+    cpu_env = dict(os.environ)
+    cpu_env["JAX_PLATFORMS"] = "cpu"
+    cpu_env["JAX_ENABLE_X64"] = "1"
+    cpu_result = subprocess.run(
+        [os.sys.executable, "-c", cpu_code], env=cpu_env,
+        check=True, capture_output=True, text=True,
+    )
+    cpu_seconds = json.loads(cpu_result.stdout)["seconds"]
+    gpu_x = jnp.linspace(0.1, 10.0, 2_000_000, dtype=jnp.float64)
+    gpu_kernel = jax.jit(lambda z: jnp.sum(jnp.log1p(z) + jnp.sqrt(z)))
+    gpu_kernel(gpu_x).block_until_ready()
+    gpu_t0 = time.perf_counter()
+    gpu_kernel(gpu_x).block_until_ready()
+    gpu_seconds = time.perf_counter() - gpu_t0
+    print("### Optional CPU comparison\n")
+    print("This opt-in benchmark evaluates the same float64 JAX kernel on "
+          "the CPU and the active GPU. It is a hardware comparison, not a "
+          "timing claim for the complete tutorial.\n")
+    print("```python")
+    print("# CPU selection must occur in a fresh process before importing JAX.")
+    print('cpu_env["JAX_PLATFORMS"] = "cpu"')
+    print('subprocess.run([os.sys.executable, "-c", cpu_code], env=cpu_env)')
+    print("```\n")
+    print("| device | seconds |\n|---|---:|")
+    print(f"| CPU | {cpu_seconds:.6f} |")
+    print(f"| GPU | {gpu_seconds:.6f} |")
 ```
 
 ## Section 1: SRJF Model
@@ -508,21 +618,21 @@ The full parameter table for the SRJF model is given in Tables S10 and S11 of th
 - $\sigma^n_S$, $\sigma^n_J$, $\sigma_F$: process noise standard deviations.
 - $\tau^n_S$: measurement overdispersion parameter (negative binomial).
 
-Several parameters are fixed from the experimental protocol: $\delta = 0.013$ day$^{-1}$ (one-litre sampling out of a fixed mesocosm volume), $\mu = 0.37 \times 10^6$ cells $\cdot$ L$^{-1} \cdot$ day$^{-1}$ (twice-weekly algal supplementation), $\lambda^n_J = 0.1$ day$^{-1}$ (approximating a 10-day maturation period), and $\xi_J = 1$ (assuming similar filtration efficiency for juveniles and adults) [@ebert05; @searle16].
+Several parameters are fixed from the experimental protocol. These are $\delta = 0.013$ day$^{-1}$ for one-litre sampling out of a fixed mesocosm volume, $\mu = 0.37 \times 10^6$ cells $\cdot$ L$^{-1} \cdot$ day$^{-1}$ for twice-weekly algal supplementation, $\lambda^n_J = 0.1$ day$^{-1}$ for an approximate 10-day maturation period, and $\xi_J = 1$ for similar filtration efficiency in juveniles and adults [@ebert05; @searle16].
 
 As discussed in Section S9 of the Supplement, profile-likelihood identifiability analysis indicates that the adult susceptible noise ($\sigma^n_S$) can be fixed at zero without substantively affecting model fit, whereas $\sigma^n_J$ and $\sigma_F$ remain statistically resolved. Complete parameter estimates and MCAP confidence intervals are reported in Tables S10 and S11.
 
 ### PanelPOMP Implementation Framework
 
-The next several subsections define the model's plug-and-play components: `rproc`, `rinit`, `dmeas`, `rmeas`, and `partrans`. Each component is a short, self-contained Python callable.
+The next several subsections define the model's plug-and-play components: `rproc`, `rinit`, `dmeas`, `rmeas`, and `partrans`.
 
 #### Process Model Simulator
 
-The `rproc` component simulates the latent SRJF dynamics. This plug-and-play interface requires only the ability to *simulate* one Euler step from the process model, never to evaluate transition densities. We discretize the continuous-time SDE with step $\Delta t = 0.25$ days---small enough to control discretization bias while leaving the particle-filter and iterated-filtering inner loops cheap enough to repeat thousands of times.
+The `rproc` component simulates the latent SRJF dynamics. This plug-and-play interface requires only the ability to *simulate* one Euler step from the process model, never to evaluate transition densities. We discretize the continuous-time SDE with step $\Delta t = 0.25$ days. This is small enough to control discretization bias while keeping the particle-filter and iterated-filtering inner loops practical.
 
-The callable below implements one Euler--Maruyama step: independent Gaussian innovations with variances $(\sigma^n_S)^2 \Delta t$, $(\sigma^n_J)^2 \Delta t$, $\sigma^2_F \Delta t$ are drawn and combined with the deterministic increments of the SRJF equations. Following @ebert05, the fixed experimental constants $\delta = 0.013$, $\mu = 0.37$, $\lambda^n_J = 0.1$, and $\xi_J = 1$ are written directly into the function body.
+The callable below implements one Euler-Maruyama step. Independent Gaussian innovations with variances $(\sigma^n_S)^2 \Delta t$, $(\sigma^n_J)^2 \Delta t$, and $\sigma^2_F \Delta t$ are combined with the deterministic increments of the SRJF equations. Following @ebert05, the fixed experimental constants $\delta = 0.013$, $\mu = 0.37$, $\lambda^n_J = 0.1$, and $\xi_J = 1$ are written directly into the function body.
 
-After updating $S^n_u$, $J^n_u$, and $F_u$, the simulator applies the same numerical guard used for the production fits: any state below zero or above its declared upper bound is reset to zero and increments an `error_count` accumulator. The measurement model converts any positive `error_count` into a $-150$ log-likelihood penalty for that observation. This reset-and-penalise rule is part of the fitted transition model; replacing it with upper clipping would define a different model. The non-negative quantity $T^n_S = |S^n_u|$ is exposed for the measurement model.
+After updating $S^n_u$, $J^n_u$, and $F_u$, the simulator applies the same numerical guard used for the production fits. Any state below zero or above its declared upper bound is reset to zero and increments an `error_count` accumulator. The measurement model converts any positive `error_count` into a $-150$ log-likelihood penalty for that observation. This reset-and-penalise rule is part of the fitted transition model. Replacing it with upper clipping would define a different model. The non-negative quantity $T^n_S = |S^n_u|$ is exposed for the measurement model.
 
 ```{python}
 #| label: srjf-rprocess
@@ -638,7 +748,7 @@ The measurement density evaluates to
 $$f_{Y_{u,n}|X_{u,n}}(y^*_{u,n} \mid x_{u,n}; \theta) = f_{\text{NBinomial}}\big(y^*_{u,n}; S^n_u(t_n), \tau^n_S\big),$$
 corresponding to equation (8) of the main text. Trajectories flagged by `error_count > 0` have their log-likelihood replaced by the constant penalty $-150$, which removes them from consideration in the particle filter while avoiding the numerical instabilities associated with $-\infty$.
 
-We use $\tau^n_S$ directly as the `size` parameter (equivalently, the parameter `k_Sn` in code) of the NB mean--dispersion parameterisation. The log-pmf is computed via `gammaln` because `jax.scipy.stats.nbinom.logpmf` uses the $(n, p)$ parameterisation and expects integer counts, both awkward inside a JIT-compiled particle filter.
+We use $\tau^n_S$ directly as the `size` parameter, called `k_Sn` in code, of the NB mean-dispersion parameterisation. The log-pmf is computed via `gammaln` because `jax.scipy.stats.nbinom.logpmf` uses the $(n, p)$ parameterisation and expects integer counts, both awkward inside a JIT-compiled particle filter.
 
 ```{python}
 #| label: srjf-dmeas
@@ -662,7 +772,7 @@ def srjf_dmeas(Y_, X_, theta_, covars, t):
     return jnp.where(error_count > 0.0, -150.0, ll)
 ```
 
-The `srjf_rmeas` component simulates $\tilde{N}^n_{S,u,n} \sim \text{NBinomial}(S^n_u(t_n), \tau^n_S)$ as a Gamma--Poisson mixture, which JAX supports natively.
+The `srjf_rmeas` component simulates $\tilde{N}^n_{S,u,n} \sim \text{NBinomial}(S^n_u(t_n), \tau^n_S)$ as a Gamma-Poisson mixture, which JAX supports natively.
 
 ```{python}
 #| label: srjf-rmeas
@@ -682,7 +792,7 @@ def srjf_rmeas(X_, theta_, key, covars, t):
 
 To ensure biological plausibility and improve numerical stability during optimisation, log transformations map the constrained space $\Theta^+ = \{\theta : \theta_i > 0\}$ to $\mathbb{R}^p$, so the iterated filter can apply Gaussian perturbations without violating positivity:
 $$\tilde{\theta}_i = \log(\theta_i) \quad \text{for} \quad \theta_i \in \{r^n, f^n_S, \theta^n_S, \theta^n_J, \sigma^n_J, \sigma_F, \tau^n_S\}.$$
-During iterated filtering, the perturbation is applied to $\tilde{\theta}$ via additive Gaussian noise. Parameters are back-transformed to the natural scale via $\theta_i = \exp(\tilde{\theta}_i)$ before evaluating `srjf_rproc` or `srjf_dmeas`. The scheme is scale-invariant---relative steps scale with parameter magnitude---and prevents numerical underflow as parameters approach zero.
+During iterated filtering, the perturbation is applied to $\tilde{\theta}$ via additive Gaussian noise. Parameters are back-transformed to the natural scale via $\theta_i = \exp(\tilde{\theta}_i)$ before evaluating `srjf_rproc` or `srjf_dmeas`. The scheme is scale invariant because relative steps scale with parameter magnitude, and it prevents numerical underflow as parameters approach zero.
 
 Because $\sigma^n_S \equiv 0$ (see the parameter discussion above), it is *not* log-transformed. The remaining seven parameters are mapped through `jnp.log` / `jnp.exp`.
 
@@ -718,9 +828,9 @@ def srjf_from_est(theta):
 srjf_par_trans = pp.ParTrans(to_est=srjf_to_est, from_est=srjf_from_est)
 ```
 
-We construct one `Pomp` object per replicate $u \in \{A, B, \ldots, J\}$. Each unit shares the same model components (`rinit`, `rproc`, `dmeasure`, `rmeasure`, `partrans`) and differs only in its observed time series. The sampling grid is uniform across replicates---ten observations at days $7, 12, \ldots, 52$---and the simulation initial time $t_0 = 0$ leaves a seven-day pre-observation integration window before the first likelihood evaluation. The integration step $\Delta t = 0.25$ days is passed to `pp.Pomp` via `dt=0.25`, and `error_count` is reset to zero at every observation time via the `accumvars` argument.
+We construct one `Pomp` object per replicate $u \in \{A, B, \ldots, J\}$. Each unit shares the same model components (`rinit`, `rproc`, `dmeasure`, `rmeasure`, `partrans`) and differs only in its observed time series. The sampling grid has ten observations at days $7, 12, \ldots, 52$ in every replicate. The simulation initial time $t_0 = 0$ leaves a seven-day pre-observation integration window before the first likelihood evaluation. The integration step $\Delta t = 0.25$ days is passed to `pp.Pomp` via `dt=0.25`, and `error_count` is reset to zero at every observation time via the `accumvars` argument.
 
-Following the model selection analysis in Section S9 of the Supplement (Tables S10--S12), all SRJF parameters are shared across units: $\theta = \phi$ with $\psi_u = \emptyset$ for all $u$.
+Following the model selection analysis in Section S9 of the Supplement (Tables S10 to S12), all SRJF parameters are shared across units: $\theta = \phi$ with $\psi_u = \emptyset$ for all $u$.
 
 ```{python}
 #| label: srjf-params-and-construction
@@ -798,7 +908,7 @@ The resulting `panelfood` object represents the complete PanelPOMP model with $U
 
 Panel iterated filtering (PIF) extends IF2 to panel data by coupling a coordinated random walk in parameter space with simultaneous filtering of all $U$ units [@breto20]. At iteration $m \in 1{:}M$, each particle $j$ carries a parameter value $\phi^{(m)}_j$ that is perturbed before each observation by a Gaussian random walk with increments whose variance is multiplied by a geometric cooling factor, $a^{2m/50}$, with $a < 1$ being the cooling fraction in 50 iterations. Pseudocode for PIF and its marginalised variant MPIF appears as Section S2 of the Supplement.
 
-The compute budget is set by the `RUN_LEVELS` table in the global setup chunk. Independent controls are used for MIF particles and iterations, the number of starts, and the particles and replicates used for final likelihood evaluation. This separation prevents the scientific search effort from changing accidentally with a plotting or Monte Carlo-summary setting.
+The compute budget is set by the `RUN_LEVELS` table in the global setup chunk. Its three levels match the particle counts, likelihood replicates, and MIF iterations in the R and regular Python tutorials. Run level 2 is used here.
 
 ```{python}
 #| label: srjf-algorithmic-params
@@ -807,11 +917,11 @@ The compute budget is set by the `RUN_LEVELS` table in the global setup chunk. I
 # All MIF/pfilter calls in this section read their compute budget from RL,
 # the run-level dictionary set in the global-setup chunk. Editing run_level
 # at the top of the document propagates here without further changes.
-J_mif      = RL["J"]
-M_mif      = RL["Nmif"]
-Nstarts    = RL["n_starts"]
-J_pf_eval  = RL["J_eval"]
-Npf_reps   = RL["pf_reps"]
+J_mif      = RL_SRJF["J"]
+M_mif      = RL_SRJF["Nmif"]
+Nstarts    = RL_SRJF["n_starts"]
+J_pf_eval  = RL_SRJF["J_eval"]
+Npf_reps   = RL_SRJF["pf_reps"]
 print(f"MIF compute budget: J={J_mif}, M={M_mif}, Nstarts={Nstarts}")
 print(f"Final pfilter eval: J={J_pf_eval}, reps={Npf_reps}")
 ```
@@ -841,11 +951,11 @@ srjf_rw_sd = pp.RWSigma(
 ).geometric_cooling(0.7)
 ```
 
-Maximum likelihood estimation for PanelPOMP models is a non-convex problem with multiple local maxima. To assess and reduce dependence on initialization, we run several independent MIF chains from reproducibly dispersed starting parameter vectors on the log scale, using distinct RNG streams. Agreement among high-likelihood terminal estimates provides evidence that the result is not an artifact of one starting value; the run achieving the highest independently evaluated final likelihood is taken as the candidate MLE.
+Maximum likelihood estimation for PanelPOMP models is a non-convex problem with multiple local maxima. We compare labeled good, medium, and poor starting vectors. The first good start is the R tutorial vector, and the remaining good starts receive small log-scale perturbations with standard deviation 0.08. Medium starts use 0.45, and poor starts use 1.0. Every chain then uses the same MIF hyperparameters and a distinct random-number stream. The run with the highest independently evaluated final likelihood is taken as the candidate MLE.
 
 In Pypomp, this multi-start search is expressed by replicating the panel-parameter object before calling `mif`: each replicate of `panel.theta` becomes one independent chain, and a single call to `panel.mif(...)` advances all chains in parallel under JAX. After MIF, a final particle filter on the terminal estimates yields a low-variance evaluation of $\log L(\hat\phi^{(M)})$.
 
-The current Pypomp API supports a genuinely all-shared parameterization. The fixed parameter `sigSn` remains in the shared block with random-walk standard deviation zero; it is neither estimated nor used as an artificial unit-specific placeholder.
+The current Pypomp API supports a genuinely all-shared parameterization. The fixed parameter `sigSn` remains in the shared block with random-walk standard deviation zero. It is neither estimated nor used as an artificial unit-specific placeholder.
 
 ```{python}
 #| label: srjf-mif-search
@@ -859,12 +969,13 @@ srjf_panel_shared_df = pd.DataFrame(
     index=shared_keys_srjf,
 )
 srjf_panel_unit_df = pd.DataFrame(index=[], columns=unit_names)
-srjf_panel_theta_multi = make_panel_starts(
+srjf_start_qualities = start_quality_schedule(Nstarts)
+srjf_panel_theta_multi, srjf_start_qualities = make_quality_panel_starts(
     srjf_panel_shared_df,
     srjf_panel_unit_df,
-    Nstarts,
     seed=100,
     fixed=("sigSn",),
+    qualities=srjf_start_qualities,
 )
 
 
@@ -894,6 +1005,10 @@ def _run_srjf_mif():
     panel = pp.PanelPomp(
         Pomp_dict=srjf_pomp_dict, theta=srjf_panel_theta_multi,
     )
+    panel.pfilter(
+        J=J_pf_eval, reps=Npf_reps, key=jax.random.key(100),
+    )
+    initial_ll = np.asarray(panel.results_history[-1].logLiks.values)
     panel.mif(
         J=J_mif, M=M_mif, rw_sd=srjf_rw_sd,
         block=False,
@@ -903,6 +1018,7 @@ def _run_srjf_mif():
         J=J_pf_eval, reps=Npf_reps, key=jax.random.key(202),
     )
     return {
+        "initial_ll":  initial_ll,
         "ll_arr":      np.asarray(panel.results_history[-1].logLiks.values),
         "traces":      panel.traces(),
         "final_theta": panel.theta.params(as_list=True),
@@ -921,6 +1037,9 @@ def _finite_argmax(values):
 mif_out = cached("srjf_mif_search", _run_srjf_mif)
 mif_ll_arr = mif_out["ll_arr"]                       # (Nstarts, U, reps)
 mif_traces = mif_out["traces"]
+_, _, srjf_initial_ll, srjf_initial_se = summarize_panel_loglik(
+    mif_out["initial_ll"]
+)
 unit_ll_per_start, unit_se_per_start, panel_ll_per_start, panel_se_per_start = (
     summarize_panel_loglik(mif_ll_arr)
 )
@@ -941,9 +1060,23 @@ srjf_start_se = float(panel_ll_se_all[0])
 
 mif_summary = pd.DataFrame({
     "start": np.arange(Nstarts),
+    "quality": srjf_start_qualities,
+    "initial_logLik": srjf_initial_ll,
     "panel_logLik": panel_ll_per_start,
     "MCSE": panel_se_per_start,
+    "improvement": panel_ll_per_start - srjf_initial_ll,
 })
+srjf_quality_summary = (
+    mif_summary.groupby("quality", sort=False)
+    .agg(
+        starts=("start", "count"),
+        mean_initial_logLik=("initial_logLik", "mean"),
+        mean_terminal_logLik=("panel_logLik", "mean"),
+        best_terminal_logLik=("panel_logLik", "max"),
+        mean_improvement=("improvement", "mean"),
+    )
+    .reset_index()
+)
 agreement_tol = np.maximum(
     1.0,
     2.0 * np.sqrt(
@@ -968,6 +1101,10 @@ srjf_mle_panel_theta = pp.PanelParameters({
 })
 print(f"MIF + final pfilter wall: {TIMINGS['srjf_mif_search']:.1f}s")
 print(mif_summary.to_string(index=False))
+print("\nSummary by starting-point quality:")
+print(srjf_quality_summary.to_string(
+    index=False, float_format=lambda x: f"{x:.3f}",
+))
 print(f"Best MIF start: {best_idx}, panel logLik = "
       f"{srjf_mif_candidate_ll:.2f} (MCSE {srjf_mif_candidate_se:.2f})")
 print(
@@ -995,7 +1132,7 @@ for k in PARAM_NAMES:
     print(f"  {k:>10s}: {srjf_mle_theta[k]:.6g}")
 ```
 
-The best finite terminal parameter vector is used in the calculations below. The complete table of independently evaluated terminal likelihoods, their Monte Carlo standard errors, the number within the stated tolerance of the best, and the differences from the starting and stored reference likelihoods are printed so that the reader can assess the optimisation directly. Two clarifications on the call:
+The good, medium, and poor starts use identical particles, iterations, perturbations, cooling, and final likelihood evaluation. Only the initial parameter displacement changes. The table reports the initial likelihood, terminal likelihood, Monte Carlo standard error, and improvement for every start, followed by a group summary. The best finite terminal parameter vector is used below. Two details of the call are useful:
 
 - **Cooling is configured on `RWSigma`.** Calling `.geometric_cooling(0.7)` makes 0.7 the multiplicative reduction in perturbation standard deviation accumulated over fifty iterations.
 - **`block=False` selects standard PIF.** The MPIF implementation with `block=True` is demonstrated in Diagnostic 2 for the mixed SRJF model containing unit-specific adult mortality.
@@ -1017,7 +1154,7 @@ ll_per_unit_all, ll_per_unit_se_all, panel_ll_all, panel_ll_se_all = (
 ll_per_unit = ll_per_unit_all[0]
 
 print(f"panel pfilter wall: {TIMINGS['srjf_start_pfilter']:.2f}s  "
-      f"(J={RL['J_eval']}, reps={RL['pf_reps']})")
+      f"(J={RL_SRJF['J_eval']}, reps={RL_SRJF['pf_reps']})")
 print("Per-unit log-likelihood (log-mean-exp over replicates):")
 for u, v in zip(unit_names, ll_per_unit):
     print(f"  {u}: {v:8.3f}")
@@ -1025,7 +1162,7 @@ print(f"Total panel logLik: {float(panel_ll_all[0]):.3f} "
       f"(MCSE {float(panel_ll_se_all[0]):.3f})")
 ```
 
-A correctly scaled panel produces stable per-unit log-likelihoods on the order of $-50$ for SRJF data and a substantial effective sample size (ESS) at every observation time. Deliberately mis-scaled parameter vectors---perturbing rates by several orders of magnitude---would by contrast yield degenerate filters whose ESS collapses toward unity, with particle weights dominated by a single trajectory. The mis-scaled counter-example below quantifies this contrast.
+A correctly scaled panel produces stable per-unit log likelihoods on the order of $-50$ for SRJF data and a substantial effective sample size (ESS) at every observation time. Deliberately mis-scaled parameter vectors with rates perturbed by several orders of magnitude yield degenerate filters whose ESS collapses toward unity. The mis-scaled counter-example below quantifies this contrast.
 
 If the pfilter output looks pathological (very negative per-unit log-likelihoods with high Monte Carlo variance), four checks usually localise the problem: (i) parameter units in the simulator (day$^{-1}$, ind./L, etc.) are consistent with those of the data, (ii) dimensional and dimensionless parameters have biologically plausible magnitudes, (iii) `srjf_par_trans` correctly applies log transforms to all positive-valued parameters, and (iv) `srjf_rinit` returns initial densities consistent with the experimental protocol. This advice is based on similar obstacles that we encountered and resolved while developing this data analysis. Mis-scaled starting points can prevent iterated filtering from locating the MLE even with a correct algorithm, because the optimisation can become trapped in regions where numerical instability precludes accurate likelihood evaluation.
 
@@ -1066,11 +1203,13 @@ def _run_srjf_scaling():
         theta=pp.PanelParameters(panelfood_wrong.theta),
     )
     panel_correct.pfilter(
-        J=RL["J_eval"], reps=RL["pf_reps"], key=jax.random.key(801)
+        J=RL_SRJF["J_eval"], reps=RL_SRJF["pf_reps"],
+        key=jax.random.key(801)
     )
     correct = np.asarray(panel_correct.results_history[-1].logLiks.values)
     panel_wrong.pfilter(
-        J=RL["J_eval"], reps=RL["pf_reps"], key=jax.random.key(801)
+        J=RL_SRJF["J_eval"], reps=RL_SRJF["pf_reps"],
+        key=jax.random.key(801)
     )
     wrong = np.asarray(panel_wrong.results_history[-1].logLiks.values)
     return {"correct": correct, "wrong": wrong}
@@ -1120,7 +1259,7 @@ The well-scaled initial parameters yield a finite panel log-likelihood with smal
 #| code-fold: true
 #| fig-width: 10
 #| fig-height: 4
-#| fig-cap: "Unit-level log-likelihood contributions under correctly scaled (left) and mis-scaled (right) parameters. Bars are measured from each panel's own mean, shown dashed, while both vertical axes retain absolute log-likelihood coordinates; note the very different scales. Mis-scaling costs roughly $140$ log units per unit and does so unevenly, because the fixed $-150$ penalty applies once per violating observation and units differ in how many of their observations violate a state bound."
+#| fig-cap: "Unit-level log-likelihood contributions under correctly scaled (left) and mis-scaled (right) parameters. Bars are measured from each panel's own mean, shown dashed, while both vertical axes retain absolute log-likelihood coordinates. Note the different scales. Mis-scaling costs roughly $140$ log units per unit and does so unevenly because the fixed $-150$ penalty applies once per violating observation."
 
 fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=False)
 
@@ -1189,7 +1328,7 @@ axes[1].tick_params(axis="both", labelsize=FONTS["tick"])
 fig.tight_layout()
 ```
 
-Under correctly scaled parameters, unit-level log-likelihoods exhibit moderate variation reflecting differences among observed trajectories. Under mis-scaling every unit is far worse, by of order $140$ log units, and the degradation is uneven rather than uniform. This is what the measurement model's fixed $-150$ penalty produces when `error_count > 0`: the penalty is applied once per violating observation, so a unit whose trajectory violates a state bound at many observation times is pushed much lower than one that violates at a few. The spread across the mis-scaled panel therefore counts constraint violations; it is not a measure of how well the units are otherwise described. In the limit where every observation of every unit violates, the panel log-likelihood would reach $-150 \times U \times N = -15{,}000$.
+Under correctly scaled parameters, unit-level log likelihoods exhibit moderate variation reflecting differences among observed trajectories. Under mis-scaling every unit is far worse, by about $140$ log units, and the degradation is uneven. The measurement model applies its fixed $-150$ penalty once per violating observation. A unit whose trajectory violates a state bound at many times is therefore pushed lower than one with fewer violations. The spread across the mis-scaled panel counts constraint violations and is not a measure of how well the units are otherwise described. If every observation in every unit violated a bound, the panel log likelihood would reach $-150 \times U \times N = -15{,}000$.
 
 The well-scaled panel filters cleanly and mis-scaling is detectable rather than silent, so we proceed to maximum-likelihood estimation. The next subsection sets the algorithmic budget and perturbation scheme that the MIF call inherits.
 
@@ -1263,12 +1402,12 @@ unit_uspec_df = pd.DataFrame(
     {u: [srjf_mle_theta[k] for k in spec_keys] for u in unit_names},
     index=spec_keys,
 )
-panel_theta_uspec = make_panel_starts(
+panel_theta_uspec, srjf_uspec_start_qualities = make_quality_panel_starts(
     shared_uspec_df,
     unit_uspec_df,
-    Nstarts,
     seed=300,
     fixed=("sigSn",),
+    qualities=srjf_start_qualities,
 )
 
 # rw_sd: same magnitudes; theta_Sn now perturbs per-unit because it is
@@ -1378,14 +1517,14 @@ The displayed table always reports the two likelihood estimates, parameter count
 
 #### Diagnostic 3: MIF searches visualization
 
-Each MIF run produces a *trace*: a sequence of log-likelihood values recorded across iterations. Examining traces across parallel searches gives insight into convergence behaviour, algorithmic performance, and Monte Carlo stability. @fig-srjf-mif-traces shows the individual likelihood traces without a smoothing curve.
+Each MIF run produces a trace of log-likelihood values across iterations. @fig-srjf-mif-traces compares good, medium, and poor starting points under the same algorithmic settings. The comparison shows whether poorer starts climb toward the same likelihood region and how much progress occurs before cooling reduces the perturbations.
 
 ```{python}
 #| label: fig-srjf-mif-traces
 #| code-fold: true
 #| fig-width: 8
 #| fig-height: 4
-#| fig-cap: "MIF log-likelihood traces across independent searches. Colors distinguish searches; convergence is assessed from stabilization and agreement of the individual traces."
+#| fig-cap: "SRJF MIF traces from good, medium, and poor starting points under matched particle counts, iterations, perturbations, cooling, and evaluation settings."
 
 # Restrict to the shared-parameter rows; the unit-specific rows hold sigSn,
 # which is fixed at 0 by rw_sd and therefore uninformative.
@@ -1393,34 +1532,42 @@ shared_trace = mif_traces[
     (mif_traces["unit"] == "shared") & (mif_traces["method"] == "mif")
 ].copy()
 
-# Distinct color per chain (theta_idx 0..Nstarts-1).
 chain_ids = sorted(shared_trace["theta_idx"].unique())
-cmap = plt.get_cmap("turbo")
-colors = [cmap(0.15 + 0.7 * i / max(len(chain_ids) - 1, 1))
-          for i in range(len(chain_ids))]
+quality_colors = {
+    "good": PALETTE["adult"],
+    "medium": PALETTE["juvenile"],
+    "poor": PALETTE["warn"],
+}
 
 fig, ax = plt.subplots(figsize=(8, 4))
-for color, chain_id in zip(colors, chain_ids):
+used_labels = set()
+for chain_id in chain_ids:
+    quality = srjf_start_qualities[int(chain_id)]
+    color = quality_colors[quality]
     sub = shared_trace[shared_trace["theta_idx"] == chain_id]
     sub = sub[np.isfinite(sub["logLik"])].sort_values("iteration")
     ax.plot(
         sub["iteration"], sub["logLik"],
-        color=color, alpha=0.7, linewidth=0.8,
+        color=color, alpha=0.65, linewidth=0.9,
+        label=quality if quality not in used_labels else None,
     )
+    used_labels.add(quality)
     ax.scatter(
         sub["iteration"], sub["logLik"],
         color=color, alpha=0.6, s=10,
     )
 ax.set_xlabel("Iteration", fontsize=FONTS["axis_label"])
 ax.set_ylabel("Log-likelihood", fontsize=FONTS["axis_label"])
-ax.set_title("MIF Convergence Traces", fontsize=FONTS["panel_title"])
+ax.set_title("SRJF MIF traces by starting-point quality",
+             fontsize=FONTS["panel_title"])
 ax.tick_params(axis="both", labelsize=FONTS["tick"])
+ax.legend(title="Start", fontsize=FONTS["legend"], frameon=False)
 fig.tight_layout()
 ```
 
-MIF optimisation typically exhibits high-variance exploration, ascent toward higher-likelihood regions, and eventual stabilization as geometric cooling shrinks perturbations. The independently evaluated terminal likelihoods and MCSEs above quantify agreement between starts; the trace plot provides the corresponding iteration-by-iteration view. Production SRJF results are reported in Section S9 of the Supplement.
+The initial and terminal likelihood table quantifies improvement, while the traces show when that improvement occurs. A poor start that rises toward the terminal region demonstrates recovery from a deliberately displaced parameter vector. Persistent separation between start groups indicates that additional starts or a broader search may be needed. Production SRJF results are reported in Section S9 of the Supplement.
 
-Trace patterns also guide tuning. Erratic trajectories indicate particle degeneracy, most commonly when $J$ is too small relative to state-space dimension and measurement-error structure. Remedies are to increase $J$, modestly enlarge `rw_sd`, or slow the cooling schedule (e.g., raise $a$ from 0.7 to 0.8). Sudden log-likelihood drops may signal numerical instabilities from poor parameter scaling or boundary violations, and warrant rechecking initial values and the log-transform in `srjf_par_trans`. Across chains, large discrepancies between the best and median runs suggest a rugged likelihood surface or inadequate computational effort. The highest-likelihood chain can then reseed subsequent optimisation.
+Trace patterns also guide tuning. Erratic trajectories can indicate that $J$ is too small relative to the state dimension and measurement model. Remedies include increasing $J$, modestly enlarging `rw_sd`, or slowing the cooling schedule by raising $a$ from 0.7 to 0.8. Sudden log-likelihood drops warrant checking parameter scales, state bounds, and the log transform in `srjf_par_trans`. Large differences between the best and median terminal values suggest that more independent searches are needed.
 
 #### Diagnostic 4: Monte Carlo Adjusted Profile
 
@@ -1428,13 +1575,11 @@ Following @ionides17 and @ning21, the Monte Carlo Adjusted Profile (MCAP) method
 
 The interpretation of an MCAP result depends on the observed profile. A sharply curved profile with the unrestricted MIF estimate near the smoothed maximum differs from a nearly flat profile or one whose maximum lies on a grid boundary. Following the R tutorial, we examine the adult mortality rate $\theta^n_S$ and the juvenile mortality rate $\theta^n_J$ to illustrate these contrasting identifiability patterns.
 
-Pypomp's `pp.mcap(parameter, loglik, level=0.95, span=0.75)` accepts a one-dimensional grid of focal-parameter values and the corresponding profile log-likelihoods, and returns an `MCAPResult` with attributes `mle`, `ci`, `delta`, `se_stat`, `se_mc`, `se_total`, `quadratic_coef`, `quadratic_max`, `vcov`, and a `fit` dictionary holding the smoothed and quadratic-fit curves on a fine grid. There is no built-in profile-grid generator, so the profile design is built here.
+Pypomp's `pp.mcap(parameter, loglik, level=0.95, span=0.75)` accepts a one-dimensional parameter grid and the corresponding profile log likelihoods. It returns the MCAP estimate, confidence interval, standard errors, and fitted profile curves.
 
 For each focal parameter we take `nprof` values spaced logarithmically over a decade in each direction around the estimate, and at every focal value we start `nprof` independent MIF searches whose remaining free parameters are drawn log-uniformly across the same box. The focal parameter is held fixed by setting its random-walk standard deviation to zero, every search is evaluated by a multi-replicate `pfilter`, and the profile point is the best of the searches at that focal value. This dispersed multi-start design is what keeps the profile away from the fixed $-150$ constraint penalty: a focal value whose starts are all clustered in one region can be trapped where the measurement model penalises every trajectory, whereas starts spread across the box will normally include a feasible one.
 
-At `run_level = 1`, the following calculations primarily test execution. At every run level, the raw tables, fitted curves, and intervals are displayed as computed. The tables report the focal value, likelihood, MCSE, and unrestricted-likelihood gap before smoothing. Alternate-span and coarser-grid fits are also reported numerically so that sensitivity can be assessed directly; a final scientific analysis should additionally compare runs at levels 2 and 3.
-
-A well-identified parameter is the textbook case. Four diagnostic observations should *all* hold: the smoothed profile $\tilde\ell_P$ shows clear curvature around an interior maximum, the MIF point estimate from `srjf-mif-search` sits inside (and ideally close to) the resulting MCAP confidence interval, the local-quadratic coefficient `quadratic_coef['a']` is comfortably positive (the profile is locally concave on the negative log scale), and the 95% CI is narrow on the natural scale. When all four hold, MCAP can be reported as the final uncertainty quantification.
+Only 95% confidence intervals are reported. The first example, $\theta^n_S$, illustrates a well-identified parameter with an interior maximum and visible curvature. The second, $\theta^n_J$, illustrates a weakly identified parameter whose interval may reach the evaluated range. The figures and concise summaries are shown without raw profile tables or smoothing-sensitivity tables.
 
 ```{python}
 #| label: srjf-mcap-theta-Sn
@@ -1457,72 +1602,11 @@ def _mcap_checked(parameter, loglik, span):
     return result, warning_messages
 
 
-def _profile_raw_table(subset_df, prof_name, unrestricted_loglik):
-    """Return the pre-smoothing numerical audit table for a profile.
-
-    One row per focal value: the best of the dispersed starts at that value.
-    """
-    loglik = subset_df["loglik"].to_numpy()
-    return pd.DataFrame({
-        "focal_value": subset_df[prof_name].to_numpy(),
-        "log_focal_value": subset_df[f"log_{prof_name}"].to_numpy(),
-        "profile_logLik": loglik,
-        "MCSE": subset_df["mcse"].to_numpy(),
-        "unrestricted_logLik": unrestricted_loglik,
-        "likelihood_gap": loglik - unrestricted_loglik,
-        "informative": _profile_informative(loglik, unrestricted_loglik),
-        "implausible": _profile_implausible(loglik, unrestricted_loglik),
-    })
-
-
 def _mcap_ci_array(result):
     """Return MCAP interval endpoints as floats, using NaN for open ends."""
     return np.asarray([
         np.nan if value is None else float(value) for value in result.ci
     ])
-
-
-def _mcap_sensitivity(parameter, loglik, base_result, base_span):
-    """Return alternate-span and coarser-grid MCAP results for comparison."""
-    if len(parameter) < 3:
-        return pd.DataFrame({
-            "comparison": ["not computed: fewer than three profile points"],
-        })
-
-    alternate_span = 0.85 if base_span >= 0.90 else min(0.95, base_span + 0.10)
-    coarse_idx = np.arange(0, len(parameter), 2)
-    if coarse_idx[-1] != len(parameter) - 1:
-        coarse_idx = np.append(coarse_idx, len(parameter) - 1)
-
-    alternatives = [
-        ("alternate span", parameter, loglik, alternate_span),
-        ("coarser grid", parameter[coarse_idx], loglik[coarse_idx], base_span),
-    ]
-    rows = []
-    base_ci = _mcap_ci_array(base_result)
-
-    for label, par_alt, ll_alt, span_alt in alternatives:
-        alt_result, alt_warnings = _mcap_checked(par_alt, ll_alt, span_alt)
-        alt_ci = _mcap_ci_array(alt_result)
-        finite_ci = np.all(np.isfinite(base_ci)) and np.all(np.isfinite(alt_ci))
-        rows.append({
-            "comparison": label,
-            "points": len(par_alt),
-            "span": span_alt,
-            "mle": float(alt_result.mle),
-            "ci_low": alt_ci[0],
-            "ci_high": alt_ci[1],
-            "mle_difference_from_base": (
-                float(alt_result.mle) - float(base_result.mle)
-            ),
-            "max_ci_endpoint_difference": (
-                float(np.max(np.abs(alt_ci - base_ci)))
-                if finite_ci else np.nan
-            ),
-            "warnings": "; ".join(alt_warnings),
-        })
-    return pd.DataFrame(rows)
-
 
 def _emit_figure(fig, label, caption):
     """Embed a numbered Matplotlib figure directly in the rendered Markdown."""
@@ -1717,12 +1801,6 @@ se_grid_Sn = subset_data_theta_Sn["mcse"].to_numpy()
 grid_Sn = np.exp(log_grid_Sn)
 focal_mle_Sn = float(srjf_mle_theta[focal_Sn])
 
-profile_table_Sn = _profile_raw_table(subset_data_theta_Sn, name_str, best_ll)
-print(profile_table_Sn.to_string(
-    index=False,
-    float_format=lambda x: f"{x:.5g}",
-))
-
 keep_Sn = _profile_mask(ll_grid_Sn, best_ll, "theta_Sn")
 
 mcap_Sn, mcap_Sn_warnings = _mcap_checked(
@@ -1748,32 +1826,21 @@ profile_gap_se_Sn = float(np.sqrt(
     se_grid_Sn[raw_max_idx_Sn] ** 2 + best_ll_se ** 2
 ))
 mcap_Sn_ci = _mcap_ci_array(mcap_Sn)
-mcap_Sn_sensitivity = _mcap_sensitivity(
-    log_grid_Sn[keep_Sn], ll_grid_Sn[keep_Sn], mcap_Sn, 0.6
-)
-print("  MCAP result for theta_Sn:")
+print("95% MCAP summary for theta_Sn:")
 print(f"    MLE (log / natural): {mcap_Sn.mle} / {np.exp(mcap_Sn.mle)}")
 print(f"    95% CI (log): {tuple(mcap_Sn.ci)}")
 if np.all(np.isfinite(mcap_Sn_ci)):
     print(f"    95% CI (natural): {tuple(np.exp(mcap_Sn_ci))}")
-    print(
-        "    CI distance from evaluated grid edges (left / right): "
-        f"{mcap_Sn_ci[0] - np.min(log_grid_Sn[keep_Sn]):.6g} / "
-        f"{np.max(log_grid_Sn[keep_Sn]) - mcap_Sn_ci[1]:.6g}"
-    )
 print(
     "    se_stat / se_mc / se_total: "
     f"{mcap_Sn.se_stat} / {mcap_Sn.se_mc} / {mcap_Sn.se_total}"
 )
-print(f"    local quadratic coefficient a: {mcap_Sn.quadratic_coef['a']}")
 print(
     "    raw profile maximum minus unrestricted logLik: "
     f"{profile_max_gap_Sn:+.6g} "
     f"(combined MCSE {profile_gap_se_Sn:.6g})"
 )
 print(f"    unrestricted MIF estimate (log): {mif_log_Sn}")
-print("  MCAP sensitivity calculations:")
-print(mcap_Sn_sensitivity.to_string(index=False))
 ```
 
 ```{python}
@@ -1848,17 +1915,16 @@ _emit_figure(
     caption=(
         "MCAP profile log-likelihood for $\\theta^n_S$ on the log "
         "scale. Points and error bars are independently evaluated profile "
-        "log-likelihoods with $\\pm 2$ MCSE; curves and vertical markers show "
+        "log-likelihoods with $\\pm 2$ MCSE. Curves and vertical markers show "
         "the MCAP smoothing, interval, and unrestricted estimate. Grid points "
         "that exceed the unrestricted log-likelihood, or that fall far below "
         "the best usable point, are filter artefacts rather than likelihood "
-        "evaluations; they are excluded from the fit, marked at the axis, and "
-        "listed with their exclusion reason in the raw table above."
+        "evaluations. They are excluded from the fit and marked at the axis."
     ),
 )
 ```
 
-The raw profile, MCAP fit, 95% interval, Monte Carlo and statistical standard errors, distance of the interval from the evaluated grid edges, and sensitivity calculations are all displayed. These quantities allow direct assessment of curvature, numerical precision, and dependence on smoothing choices.
+The fitted profile has an interior maximum and clear curvature. This is the well-identified example. The 95% interval and its Monte Carlo and statistical standard errors provide the uncertainty summary.
 
 MCAP does not always yield well-defined confidence intervals: the result depends on both information in the data and Monte Carlo optimisation. Juveniles are not directly observed in the fitted SRJF likelihood, so $\theta^n_J$ is informed indirectly through adult recruitment and deserves particular scrutiny. A nearly flat profile, a maximum at a grid endpoint, an interval touching the evaluated range, non-positive fitted curvature, or a large difference from the unrestricted fit can all be read directly from the output below.
 
@@ -1880,12 +1946,6 @@ ll_grid_Jn = subset_data_theta_Jn["loglik"].to_numpy()
 se_grid_Jn = subset_data_theta_Jn["mcse"].to_numpy()
 grid_Jn = np.exp(log_grid_Jn)
 focal_mle_Jn = float(srjf_mle_theta[focal_Jn])
-
-profile_table_Jn = _profile_raw_table(subset_data_theta_Jn, name_str, best_ll)
-print(profile_table_Jn.to_string(
-    index=False,
-    float_format=lambda x: f"{x:.5g}",
-))
 
 keep_Jn = _profile_mask(ll_grid_Jn, best_ll, "theta_Jn")
 
@@ -1910,32 +1970,21 @@ mcap_Jn_combined_se = float(np.sqrt(
 ))
 profile_max_gap_Jn = float(ll_grid_Jn[raw_max_idx_Jn] - best_ll)
 mcap_Jn_ci = _mcap_ci_array(mcap_Jn)
-mcap_Jn_sensitivity = _mcap_sensitivity(
-    log_grid_Jn[keep_Jn], ll_grid_Jn[keep_Jn], mcap_Jn, 0.95
-)
-print("  MCAP result for theta_Jn:")
+print("95% MCAP summary for theta_Jn:")
 print(f"    MLE (log / natural): {mcap_Jn.mle} / {np.exp(mcap_Jn.mle)}")
 print(f"    95% CI (log): {tuple(mcap_Jn.ci)}")
 if np.all(np.isfinite(mcap_Jn_ci)):
     print(f"    95% CI (natural): {tuple(np.exp(mcap_Jn_ci))}")
-    print(
-        "    CI distance from evaluated grid edges (left / right): "
-        f"{mcap_Jn_ci[0] - np.min(log_grid_Jn[keep_Jn]):.6g} / "
-        f"{np.max(log_grid_Jn[keep_Jn]) - mcap_Jn_ci[1]:.6g}"
-    )
 print(
     "    se_stat / se_mc / se_total: "
     f"{mcap_Jn.se_stat} / {mcap_Jn.se_mc} / {mcap_Jn.se_total}"
 )
-print(f"    local quadratic coefficient a: {mcap_Jn.quadratic_coef['a']}")
 print(
     "    raw profile maximum minus unrestricted logLik: "
     f"{profile_max_gap_Jn:+.6g} "
     f"(combined MCSE {mcap_Jn_combined_se:.6g})"
 )
 print(f"    unrestricted MIF estimate (log): {np.log(focal_mle_Jn)}")
-print("  MCAP sensitivity calculations:")
-print(mcap_Jn_sensitivity.to_string(index=False))
 ```
 
 ```{python}
@@ -2003,15 +2052,13 @@ _emit_figure(
     caption=(
         "MCAP profile for $\\theta^n_J$ on the log scale. Points "
         "and error bars are independently evaluated profile log-likelihoods "
-        "with $\\pm 2$ MCSE; curves and vertical markers show the MCAP "
+        "with $\\pm 2$ MCSE. Curves and vertical markers show the MCAP "
         "smoothing, interval, and unrestricted estimate."
     ),
 )
 ```
 
-The distances between the reported interval and the evaluated grid edges are printed explicitly. A zero distance means that the MCAP interval reaches the explored range and should not be mistaken for a well-resolved interior endpoint. This behavior is scientifically plausible because juveniles are not directly observed in the fitted SRJF likelihood.
-
-Two strategies improve inference when a profile remains weak or unresolved. The first is to intensify the computational search: expand the grid to test whether apparent flatness is a boundary artefact, initialise MIF chains from widely dispersed starts, and (compute permitting) increase $J$ and the number of pfilter replicates so Monte Carlo noise no longer masks underlying curvature. Following the R tutorial, the grid sizes here do not vary with run level: $\theta^n_S$ uses a `{python} nprof_Sn`-point grid and $\theta^n_J$ a `{python} nprof_Jn`-point grid, each with the same number of dispersed starts per point, while the run level sets $J$ and $M$ (at the highest level, $J$ = `{python} RUN_LEVELS[3]["J"]` particles and $M$ = `{python} RUN_LEVELS[3]["Nmif"]` iterations). The second strategy is to reduce parameterisation only with scientific justification: $\theta^n_J$ could be fixed from external biological data or constrained functionally. The reduced and unconstrained models should then be re-estimated and compared using independently evaluated likelihoods and an appropriate model-selection criterion.
+This is the weakly identified example. If the 95% interval reaches the explored range, it should not be interpreted as a resolved finite endpoint. This behavior is scientifically plausible because juveniles are not directly observed in the fitted SRJF likelihood. A wider profile grid and additional computation can distinguish a boundary effect from a genuinely flat profile.
 
 ```{python}
 #| label: srjf-timings
@@ -2167,11 +2214,11 @@ The SIRJPF2 model couples four ecological and epidemiological processes. *Reprod
 
 ### Parameter Estimation via Panel Iterated Filtering
 
-Marginalized panel iterated filtering (MPIF) is designed for panel models containing unit-specific as well as shared parameters. In Pypomp, `block=True` selects MPIF and changes the resampling treatment of unit-specific parameter particles across panel units. This use of “block” should not be confused with temporal block sampling or spatial block particle filters; those methods address different algorithms. The marginalized-Bayes-map interpretation of MPIF is developed by @wheeler25.
+Marginalized panel iterated filtering (MPIF) is designed for panel models containing unit-specific as well as shared parameters. In Pypomp, `block=True` selects MPIF and changes the resampling treatment of unit-specific parameter particles across panel units. This use of “block” should not be confused with temporal block sampling or spatial block particle filters. Those terms refer to different algorithms. The marginalized-Bayes-map interpretation of MPIF is developed by @wheeler25.
 
 The SIRJPF2 specification used here contains only shared parameters. Consequently, it provides no unit-specific parameter particles for MPIF to marginalize, and a `block=True` versus `block=False` comparison is not informative for this model. We therefore use standard panel iterated filtering (`block=False`) for SIRJPF2 and present the MPIF implementation in the unit-specific SRJF example above.
 
-Below we present the complete Pypomp implementation of standard panel iterated filtering for the SIRJPF2 model. It reuses the SRJF construction pattern and adds an eight-state Euler--Maruyama process simulator, deterministic initial states, a four-dimensional negative-binomial measurement model, and log transformations for positive parameters.
+Below we present the complete Pypomp implementation of standard panel iterated filtering for the SIRJPF2 model. It reuses the SRJF construction pattern and adds an eight-state Euler-Maruyama process simulator, deterministic initial states, a four-dimensional negative-binomial measurement model, and log transformations for positive parameters.
 
 ```{python}
 #| label: sirjpf-rprocess
@@ -2516,7 +2563,8 @@ def _run_sirjpf_smoke():
         theta=pp.PanelParameters(panelfood_sirjpf.theta),
     )
     panel.pfilter(
-        J=RL["J_eval"], reps=RL["pf_reps"], key=jax.random.key(0)
+        J=RL_SIRJPF["J_eval"], reps=RL_SIRJPF["pf_reps"],
+        key=jax.random.key(0)
     )
     return np.asarray(panel.results_history[-1].logLiks.values)
 
@@ -2527,7 +2575,7 @@ sirjpf_unit_ll0_all, sirjpf_unit_se0_all, sirjpf_panel_ll0_all, sirjpf_panel_se0
 sirjpf_panel_ll0 = float(sirjpf_panel_ll0_all[0])
 sirjpf_panel_se0 = float(sirjpf_panel_se0_all[0])
 print(f"panel pfilter wall: {TIMINGS['sirjpf_smoke_pfilter']:.2f}s "
-      f"(J={RL['J_eval']}, reps={RL['pf_reps']})")
+      f"(J={RL_SIRJPF['J_eval']}, reps={RL_SIRJPF['pf_reps']})")
 print(f"Initial panel logLik: {sirjpf_panel_ll0:.2f} "
       f"(MCSE {sirjpf_panel_se0:.2f})")
 print("Per-unit logLik (log-mean-exp over replicates):")
@@ -2536,7 +2584,7 @@ for u, v in zip(sirjpf_unit_names_full,
     print(f"  {u}: {v:8.2f}")
 ```
 
-We refine the all-shared R tutorial starting vector with standard PIF. The two fixed process-noise terms remain shared and have random-walk standard deviation zero; the other 24 parameters are perturbed on the log scale with $\sigma_{\mathrm{rw}} = 0.05$. The R starting vector, all dispersed starts, their first-stage terminal estimates, and a second refinement of the strongest distinct candidates are evaluated under the same high-particle protocol. Candidate selection therefore cannot discard a better known starting value.
+We refine the all-shared R tutorial starting vector with standard PIF. The two fixed process-noise terms remain shared and have random-walk standard deviation zero. The other 24 parameters are perturbed on the log scale with $\sigma_{\mathrm{rw}} = 0.05$. Good, medium, and poor starting vectors are evaluated with the same first-stage settings. The strongest distinct initial and terminal candidates then receive the same refinement and high-particle likelihood evaluation.
 
 ```{python}
 #| label: sirjpf-mif
@@ -2548,12 +2596,13 @@ sirjpf_panel_shared_df = pd.DataFrame(
     index=sirjpf_shared_keys_est,
 )
 sirjpf_panel_unit_df = pd.DataFrame(index=[], columns=sirjpf_unit_names_full)
-sirjpf_panel_theta_multi = make_panel_starts(
+sirjpf_start_qualities = start_quality_schedule(RL_SIRJPF["n_starts"])
+sirjpf_panel_theta_multi, sirjpf_start_qualities = make_quality_panel_starts(
     sirjpf_panel_shared_df,
     sirjpf_panel_unit_df,
-    RL["n_starts"],
     seed=500,
     fixed=("sigSn", "sigSi"),
+    qualities=sirjpf_start_qualities,
 )
 
 # Random walk: 0.05 on every estimated parameter (log scale), 0 on fixed ones.
@@ -2628,18 +2677,20 @@ def _run_sirjpf_mif():
     )
     initial_payloads = _copy_panel_payloads(panel.theta)
     panel.pfilter(
-        J=RL["J_eval"], reps=RL["pf_reps"], key=jax.random.key(601)
+        J=RL_SIRJPF["J_eval"], reps=RL_SIRJPF["pf_reps"],
+        key=jax.random.key(601)
     )
     initial_ll = np.asarray(panel.results_history[-1].logLiks.values)
 
     panel.mif(
-        J=RL["J"], M=RL["Nmif"], rw_sd=sirjpf_rw_sd,
+        J=RL_SIRJPF["J"], M=RL_SIRJPF["Nmif"], rw_sd=sirjpf_rw_sd,
         block=False,
         key=jax.random.key(501),
     )
     terminal_payloads = _copy_panel_payloads(panel.theta)
     panel.pfilter(
-        J=RL["J_eval"], reps=RL["pf_reps"], key=jax.random.key(601)
+        J=RL_SIRJPF["J_eval"], reps=RL_SIRJPF["pf_reps"],
+        key=jax.random.key(601)
     )
     terminal_ll = np.asarray(panel.results_history[-1].logLiks.values)
 
@@ -2659,21 +2710,23 @@ def _run_sirjpf_mif():
     )
     refine_initial_payloads = _copy_panel_payloads(refine_panel.theta)
     refine_panel.pfilter(
-        J=RL["J_eval"], reps=RL["pf_reps"], key=jax.random.key(601)
+        J=RL_SIRJPF["J_eval"], reps=RL_SIRJPF["pf_reps"],
+        key=jax.random.key(601)
     )
     refine_initial_ll = np.asarray(
         refine_panel.results_history[-1].logLiks.values
     )
     refine_panel.mif(
-        J=RL["J"],
-        M=RL["Nmif"],
+        J=RL_SIRJPF["J"],
+        M=RL_SIRJPF["Nmif"],
         rw_sd=sirjpf_refine_rw_sd,
         block=False,
         key=jax.random.key(701),
     )
     refine_terminal_payloads = _copy_panel_payloads(refine_panel.theta)
     refine_panel.pfilter(
-        J=RL["J_eval"], reps=RL["pf_reps"], key=jax.random.key(601)
+        J=RL_SIRJPF["J_eval"], reps=RL_SIRJPF["pf_reps"],
+        key=jax.random.key(601)
     )
     refine_terminal_ll = np.asarray(
         refine_panel.results_history[-1].logLiks.values
@@ -2690,9 +2743,14 @@ def _run_sirjpf_mif():
         + refine_terminal_payloads
     )
     candidate_source = (
-        ["R tutorial start"]
-        + [f"initial dispersed {i}" for i in range(1, len(initial_payloads))]
-        + [f"stage-1 terminal {i}" for i in range(len(terminal_payloads))]
+        [
+            f"initial {quality} {i}"
+            for i, quality in enumerate(sirjpf_start_qualities)
+        ]
+        + [
+            f"stage-1 terminal {quality} {i}"
+            for i, quality in enumerate(sirjpf_start_qualities)
+        ]
         + [f"refinement start {i}" for i in range(len(refine_initial_payloads))]
         + [
             f"refinement terminal {i}"
@@ -2701,6 +2759,8 @@ def _run_sirjpf_mif():
     )
     return {
         "candidate_ll": candidate_ll,
+        "initial_ll": initial_ll,
+        "stage1_terminal_ll": terminal_ll,
         "candidate_theta": candidate_theta,
         "candidate_source": candidate_source,
         "refinement_ll": refine_terminal_ll,
@@ -2743,7 +2803,7 @@ print(sirjpf_candidate_table.to_string(
     float_format=lambda x: f"{x:.4f}",
 ))
 sirjpf_production_idx = sirjpf_mif_out["candidate_source"].index(
-    "R tutorial start"
+    "initial good 0"
 )
 sirjpf_production_ll = float(
     sirjpf_panel_ll_per_start[sirjpf_production_idx]
@@ -2759,6 +2819,40 @@ print(
     "Improvement vs R tutorial starting candidate: "
     f"{sirjpf_best_ll - sirjpf_production_ll:+.2f}"
 )
+
+_, _, sirjpf_stage1_initial_ll, _ = summarize_panel_loglik(
+    sirjpf_mif_out["initial_ll"]
+)
+_, _, sirjpf_stage1_terminal_ll, sirjpf_stage1_terminal_se = (
+    summarize_panel_loglik(sirjpf_mif_out["stage1_terminal_ll"])
+)
+sirjpf_start_table = pd.DataFrame({
+    "start": np.arange(len(sirjpf_start_qualities)),
+    "quality": sirjpf_start_qualities,
+    "initial_logLik": sirjpf_stage1_initial_ll,
+    "terminal_logLik": sirjpf_stage1_terminal_ll,
+    "MCSE": sirjpf_stage1_terminal_se,
+    "improvement": sirjpf_stage1_terminal_ll - sirjpf_stage1_initial_ll,
+})
+sirjpf_quality_summary = (
+    sirjpf_start_table.groupby("quality", sort=False)
+    .agg(
+        starts=("start", "count"),
+        mean_initial_logLik=("initial_logLik", "mean"),
+        mean_terminal_logLik=("terminal_logLik", "mean"),
+        best_terminal_logLik=("terminal_logLik", "max"),
+        mean_improvement=("improvement", "mean"),
+    )
+    .reset_index()
+)
+print("\nMatched all-shared starts:")
+print(sirjpf_start_table.to_string(
+    index=False, float_format=lambda x: f"{x:.3f}",
+))
+print("\nSummary by starting-point quality:")
+print(sirjpf_quality_summary.to_string(
+    index=False, float_format=lambda x: f"{x:.3f}",
+))
 sirjpf_reference_ll = -880.5596
 sirjpf_reference_se = 0.232
 sirjpf_reference_gap_se = np.sqrt(
@@ -2813,7 +2907,45 @@ for k in ("rn", "ri", "f_Sn", "f_Si", "theta_Sn", "theta_Si",
     print(f"  {k:>10s}: {sirjpf_selected_theta[k]:.6g}")
 ```
 
-The SIRJPF2 searches use standard PIF because the fitted specification contains only shared parameters. Terminal parameter estimates are evaluated by replicated particle filters, and the search with the largest estimated panel log-likelihood is retained for subsequent inference.
+The SIRJPF2 searches use standard PIF because the fitted specification contains only shared parameters. The good, medium, and poor starts use the same algorithmic settings. Terminal parameter estimates are evaluated by replicated particle filters, and the search with the largest estimated panel log likelihood is retained for subsequent inference.
+
+```{python}
+#| label: fig-sirjpf-start-quality-traces
+#| code-fold: true
+#| fig-width: 8
+#| fig-height: 4
+#| fig-cap: "SIRJPF2 MIF traces from good, medium, and poor starting points under matched algorithmic settings."
+
+sirjpf_stage1_trace = sirjpf_mif_out["stage1_traces"]
+sirjpf_shared_trace = sirjpf_stage1_trace[
+    (sirjpf_stage1_trace["unit"] == "shared")
+    & (sirjpf_stage1_trace["method"] == "mif")
+].copy()
+
+fig, ax = plt.subplots(figsize=(8, 4))
+used_labels = set()
+for chain_id in sorted(sirjpf_shared_trace["theta_idx"].unique()):
+    quality = sirjpf_start_qualities[int(chain_id)]
+    sub = sirjpf_shared_trace[
+        sirjpf_shared_trace["theta_idx"] == chain_id
+    ]
+    sub = sub[np.isfinite(sub["logLik"])].sort_values("iteration")
+    ax.plot(
+        sub["iteration"], sub["logLik"],
+        color=quality_colors[quality], alpha=0.65, linewidth=0.9,
+        label=quality if quality not in used_labels else None,
+    )
+    used_labels.add(quality)
+ax.set_xlabel("Iteration", fontsize=FONTS["axis_label"])
+ax.set_ylabel("Log likelihood", fontsize=FONTS["axis_label"])
+ax.set_title("SIRJPF2 MIF traces by starting-point quality",
+             fontsize=FONTS["panel_title"])
+ax.tick_params(axis="both", labelsize=FONTS["tick"])
+ax.legend(title="Start", fontsize=FONTS["legend"], frameon=False)
+fig.tight_layout()
+```
+
+The start table measures the improvement from each initial vector, and the trace figure shows when the likelihood increases. Persistent separation between start groups would indicate that additional search effort is needed before interpreting the selected estimate.
 
 #### Fit diagnostic: per-unit log-likelihood breakdown
 
@@ -2848,14 +2980,14 @@ _emit_figure(
     caption=(
         "Per-unit log-likelihood contributions for the SIRJPF2 panel under "
         "the selected estimate. Error bars show $\\pm 2$ Monte Carlo "
-        "standard errors; the dashed line is the mean unit contribution."
+        "standard errors. The dashed line is the mean unit contribution."
     ),
 )
 ```
 
 #### Matched PIF/MPIF comparison with unit-specific infected mortality
 
-PIF and MPIF differ only when estimated unit-specific parameters are present. We therefore compare them under the SIRJPF2 alternative in which native and invasive infected-adult mortality (`theta_In`, `theta_Ii`) vary by mesocosm. The exact embedded all-shared vector is included as the first start; remaining starts are identically dispersed for both methods. After a matched first stage, the strongest distinct endpoints from both methods are pooled and used as common starts for reciprocal refinement. Particle counts, iterations, cooling, MIF keys, and final-evaluation keys are matched. The table reports final likelihoods, MCSEs, numbers of starts near each method's best result, and wall times directly.
+PIF and MPIF differ only when estimated unit-specific parameters are present. We therefore compare them under the SIRJPF2 alternative in which native and invasive infected-adult mortality (`theta_In`, `theta_Ii`) vary by mesocosm. Both methods begin from the same medium-quality parameter vectors. Particle counts, iterations, perturbations, cooling, MIF keys, and final-evaluation keys are matched. The trace comparison measures convergence speed during the first stage, and the final table compares independently evaluated terminal likelihoods and Monte Carlo standard errors.
 
 ```{python}
 #| label: sirjpf-pif-mpif-comparison
@@ -2881,12 +3013,13 @@ sirjpf_specific_unit_df = pd.DataFrame(
     },
     index=sirjpf_specific_names,
 )
-sirjpf_specific_starts = make_panel_starts(
+sirjpf_specific_quality = ["medium"] * RL_SIRJPF["n_starts"]
+sirjpf_specific_starts, sirjpf_specific_quality = make_quality_panel_starts(
     sirjpf_specific_shared_df,
     sirjpf_specific_unit_df,
-    RL["n_starts"],
     seed=1500,
     fixed=("sigSn", "sigSi"),
+    qualities=sirjpf_specific_quality,
 )
 sirjpf_specific_rw = pp.RWSigma(
     sigmas=sirjpf_rw_sigmas,
@@ -2905,21 +3038,21 @@ def _run_sirjpf_specific_stage1(block):
     )
     initial_theta = _copy_panel_payloads(panel.theta)
     panel.pfilter(
-        J=RL["J_eval"],
-        reps=RL["pf_reps"],
+        J=RL_SIRJPF["J_eval"],
+        reps=RL_SIRJPF["pf_reps"],
         key=jax.random.key(1602),
     )
     initial_ll = np.asarray(panel.results_history[-1].logLiks.values)
     panel.mif(
-        J=RL["J"],
-        M=RL["Nmif"],
+        J=RL_SIRJPF["J"],
+        M=RL_SIRJPF["Nmif"],
         rw_sd=sirjpf_specific_rw,
         block=block,
         key=jax.random.key(1601),
     )
     panel.pfilter(
-        J=RL["J_eval"],
-        reps=RL["pf_reps"],
+        J=RL_SIRJPF["J_eval"],
+        reps=RL_SIRJPF["pf_reps"],
         key=jax.random.key(1602),
     )
     return {
@@ -2949,6 +3082,59 @@ _, _, specific_pif_stage1_ll, _ = summarize_panel_loglik(
 _, _, specific_mpif_stage1_ll, _ = summarize_panel_loglik(
     sirjpf_mpif_stage1["terminal_ll"]
 )
+
+
+def _mif_trace_summary(traces):
+    """Summarize matched chains by iteration for a convergence comparison."""
+    shared = traces[
+        (traces["unit"] == "shared") & (traces["method"] == "mif")
+    ].copy()
+    return (
+        shared.groupby("iteration")["logLik"]
+        .agg(
+            median="median",
+            lower=lambda x: x.quantile(0.25),
+            upper=lambda x: x.quantile(0.75),
+        )
+        .reset_index()
+        .sort_values("iteration")
+    )
+
+
+def _iteration_to_fraction(curve, fraction=0.9):
+    """First iteration reaching a fraction of the median trace gain."""
+    start = float(curve["median"].iloc[0])
+    finish = float(curve["median"].iloc[-1])
+    if not np.isfinite(start + finish) or finish <= start:
+        return np.nan
+    target = start + fraction * (finish - start)
+    reached = curve.loc[curve["median"] >= target, "iteration"]
+    return float(reached.iloc[0]) if len(reached) else np.nan
+
+
+pif_stage1_curve = _mif_trace_summary(sirjpf_pif_stage1["traces"])
+mpif_stage1_curve = _mif_trace_summary(sirjpf_mpif_stage1["traces"])
+sirjpf_speed_table = pd.DataFrame({
+    "method": ["PIF", "MPIF"],
+    "start_quality": ["medium", "medium"],
+    "initial_median_trace_logLik": [
+        pif_stage1_curve["median"].iloc[0],
+        mpif_stage1_curve["median"].iloc[0],
+    ],
+    "terminal_median_trace_logLik": [
+        pif_stage1_curve["median"].iloc[-1],
+        mpif_stage1_curve["median"].iloc[-1],
+    ],
+    "iteration_to_90pct_gain": [
+        _iteration_to_fraction(pif_stage1_curve),
+        _iteration_to_fraction(mpif_stage1_curve),
+    ],
+})
+print("Matched medium-start convergence summary:")
+print(sirjpf_speed_table.to_string(
+    index=False, float_format=lambda x: f"{x:.3f}",
+))
+
 sirjpf_specific_pool_payloads = (
     sirjpf_pif_stage1["initial_theta"]
     + sirjpf_pif_stage1["terminal_theta"]
@@ -2976,15 +3162,15 @@ def _run_sirjpf_specific_refine(block):
         theta=pp.PanelParameters(sirjpf_specific_refine_starts),
     )
     panel.mif(
-        J=RL["J"],
-        M=RL["Nmif"],
+        J=RL_SIRJPF["J"],
+        M=RL_SIRJPF["Nmif"],
         rw_sd=sirjpf_specific_refine_rw,
         block=block,
         key=jax.random.key(1701),
     )
     panel.pfilter(
-        J=RL["J_eval"],
-        reps=RL["pf_reps"],
+        J=RL_SIRJPF["J_eval"],
+        reps=RL_SIRJPF["pf_reps"],
         key=jax.random.key(1702),
     )
     return {
@@ -3064,7 +3250,26 @@ print(
 #| code-fold: true
 #| output: asis
 
-fig, ax = plt.subplots(figsize=(8, 4))
+fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+
+for curve, method, color in (
+    (pif_stage1_curve, "PIF", PALETTE["adult"]),
+    (mpif_stage1_curve, "MPIF", PALETTE["infected"]),
+):
+    axes[0].plot(
+        curve["iteration"], curve["median"], label=method,
+        color=color, linewidth=1.5,
+    )
+    axes[0].fill_between(
+        curve["iteration"], curve["lower"], curve["upper"],
+        color=color, alpha=0.16,
+    )
+axes[0].set_xlabel("Iteration", fontsize=FONTS["axis_label"])
+axes[0].set_ylabel("Trace log likelihood", fontsize=FONTS["axis_label"])
+axes[0].set_title("Matched medium-start convergence",
+                  fontsize=FONTS["panel_title"])
+axes[0].legend(frameon=False, fontsize=FONTS["legend"])
+
 x = np.array([0.0, 1.0])
 for i in range(len(sirjpf_pif["panel_ll"])):
     vals = [sirjpf_pif["panel_ll"][i], sirjpf_mpif["panel_ll"][i]]
@@ -3072,35 +3277,38 @@ for i in range(len(sirjpf_pif["panel_ll"])):
         2 * sirjpf_pif["panel_se"][i],
         2 * sirjpf_mpif["panel_se"][i],
     ]
-    ax.plot(x, vals, color=PALETTE["quad"], alpha=0.45, linewidth=0.8)
-    ax.errorbar(
+    axes[1].plot(x, vals, color=PALETTE["quad"], alpha=0.45, linewidth=0.8)
+    axes[1].errorbar(
         x, vals, yerr=errs, fmt="o", capsize=2,
         color=PALETTE["adult"], ecolor=PALETTE["quad"],
     )
-ax.set_xticks(x)
-ax.set_xticklabels(["PIF", "MPIF"])
-ax.set_ylabel("Final panel log-likelihood", fontsize=FONTS["axis_label"])
-ax.set_title(
-    "Matched PIF/MPIF comparison: unit-specific infected mortality",
+axes[1].set_xticks(x)
+axes[1].set_xticklabels(["PIF", "MPIF"])
+axes[1].set_ylabel("Final panel log likelihood", fontsize=FONTS["axis_label"])
+axes[1].set_title(
+    "Independently evaluated terminals",
     fontsize=FONTS["panel_title"],
 )
-ax.tick_params(axis="both", labelsize=FONTS["tick"])
+for ax in axes:
+    ax.tick_params(axis="both", labelsize=FONTS["tick"])
 fig.tight_layout()
 _emit_figure(
     fig,
     label="fig-sirjpf-pif-mpif",
     caption=(
-        "Reciprocally refined terminal likelihood evaluations for PIF and "
-        "MPIF under the unit-specific infected-mortality SIRJPF2 hypothesis. "
-        "Lines pair the same pooled starting parameter vector; error bars are "
-        "$\\pm 2$ MCSE."
+        "Matched PIF and MPIF comparison for unit-specific infected mortality. "
+        "The left panel shows median convergence traces and interquartile "
+        "bands from common medium-quality starts. The right panel pairs "
+        "independently evaluated refined terminals with $\\pm 2$ MCSE."
     ),
 )
 ```
 
+The iteration reaching 90% of each method's median trace gain is a descriptive convergence-speed measure. It does not establish that either method reached the global maximum. The final likelihood and MCSE comparison remains necessary because a fast trace can settle at a lower local maximum.
+
 ### Closing remarks for Section 2
 
-The all-shared and unit-specific calculations above report their candidate likelihoods, Monte Carlo standard errors, reference differences, numbers of nearby terminal starts, and timings without an automated inferential verdict. At `run_level = 1`, the reduced budgets primarily exercise the code path. Production SIRJPF2 results are reported in Section S6 of the Supplement.
+The all-shared and unit-specific calculations report candidate likelihoods, Monte Carlo standard errors, reference differences, nearby terminal starts, and timings. The active analysis uses run level 2. Production SIRJPF2 results are reported in Section S6 of the Supplement.
 
 ```{python}
 #| label: sirjpf-timings

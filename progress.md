@@ -54,3 +54,22 @@
 - Replaced SIRJPF verdicts and figure suppression with reference differences, refinement tables, near-best counts, and an unconditional PIF/MPIF comparison.
 - Changed the all-non-finite candidate fallback to a clear `ValueError`; configuration, version, x64, file, and unusable-input checks remain.
 - Confirmed no gate/PASS/FAIL/suppression terminology remains in the advanced QMD, all 37 chunks compile, `git diff --check` passes, and the full CPU run-level-1 smoke test completes all chunks in 391 seconds.
+
+## Session: 2026-08-24
+
+### Phase: Detailed author-comment revision
+
+- **Status:** implementation complete, level-2 A100 execution pending.
+- Removed the Status section and the requested framework sentence.
+- Made run level 2 the default and aligned SRJF and SIRJPF2 budgets with the R and regular Python tutorials.
+- Required a GPU backend for the advanced workflow and placed the optional CPU benchmark wholly behind `use_CPU=False`.
+- Added the `double_precision` switch, retained float64 as the default, and added a GPU float32/float64 negative-binomial comparison.
+- Reduced displayed setup output to `run_level` and the model-specific `RL` dictionary.
+- Added matched good, medium, and poor starting-point comparisons, group statistics, and traces to Sections 1 and 2.
+- Added a common-medium-start PIF/MPIF convergence-speed comparison for the unit-specific SIRJPF2 model.
+- Simplified MCAP to fixed 95% well-identified and weakly identified examples without raw focal-value or sensitivity tables.
+- Created `Python-code/daphnia_tut_pypomp_advanced_review_checklist.html` and visually verified its desktop layout and document structure.
+- Did not execute any Pypomp calculation locally, because the current request explicitly excludes CPU computation.
+- Added `Python-code/render_gpu_precision_comparison.sh` for separate complete float32 and float64 level-2 GPU renders. The float32 result is diagnostic, the float64 result is copied for comparison, and the normal HTML remains float64.
+- Added failure restoration so an interrupted float64 second pass cannot leave the float32 diagnostic as the standard tutorial output.
+- Made the ordinary level-2 wrapper force float64 and keep the optional CPU benchmark disabled.

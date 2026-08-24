@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Advanced Daphnia tutorial review checklist</title>
+  <style>
+    :root {
+      --ink: #182230;
+      --muted: #5b6777;
+      --line: #d9e0e8;
+      --paper: #ffffff;
+      --wash: #f5f7fa;
+      --done: #176b45;
+      --done-bg: #e8f5ee;
+      --pending: #8a5a00;
+      --pending-bg: #fff5d8;
+      --accent: #2457a7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--wash);
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      max-width: 1120px;
+      margin: 32px auto;
+      padding: 0 20px 56px;
+    }
+    header, section {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 18px;
+    }
+    h1 { margin: 0 0 8px; font-size: 1.85rem; }
+    h2 { margin: 0 0 14px; font-size: 1.3rem; }
+    h3 { margin: 0 0 8px; font-size: 1.05rem; }
+    p { margin: 8px 0; }
+    code {
+      background: #edf1f6;
+      border-radius: 4px;
+      padding: 0.1em 0.35em;
+    }
+    pre {
+      overflow-x: auto;
+      background: #101722;
+      color: #f3f6fa;
+      padding: 14px;
+      border-radius: 8px;
+    }
+    pre code { background: transparent; padding: 0; }
+    .meta { color: var(--muted); }
+    .status {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-weight: 650;
+      font-size: 0.86rem;
+    }
+    .done { color: var(--done); background: var(--done-bg); }
+    .pending { color: var(--pending); background: var(--pending-bg); }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .summary > div {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 14px;
+    }
+    .summary strong { display: block; font-size: 1.15rem; }
+    .checklist { display: grid; gap: 14px; }
+    article {
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--done);
+      border-radius: 9px;
+      padding: 16px 18px;
+    }
+    article.pending-item { border-left-color: var(--pending); }
+    article ul { margin: 8px 0 0; padding-left: 22px; }
+    .request {
+      color: var(--muted);
+      border-left: 3px solid var(--line);
+      padding-left: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.94rem;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #edf2f8; }
+    .box { font-size: 1.1rem; margin-right: 7px; }
+    a { color: var(--accent); }
+    @media print {
+      body { background: white; }
+      main { max-width: none; margin: 0; padding: 0; }
+      header, section { break-inside: avoid; }
+      article { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Advanced Daphnia tutorial review checklist</h1>
+    <p class="meta">Prepared 24 August 2026 for <code>daphnia_tut_pypomp_advanced.qmd</code></p>
+    <p><span class="status done">Implementation complete</span> <span class="status pending">Level-2 GPU execution pending</span></p>
+    <p>All requested source changes are implemented. The QMD has passed static Python-chunk compilation and formatting checks. It has intentionally not been executed locally because this revision forbids CPU computation. Numerical values and figures must be verified after the run-level-2 A100 render.</p>
+    <div class="summary">
+      <div><strong>Run level 2</strong>Default tutorial budget</div>
+      <div><strong>GPU required</strong>No automatic CPU fallback</div>
+      <div><strong>Float64 default</strong>Float32 is diagnostic only</div>
+      <div><strong>95% CI only</strong>No adjustable MCAP level</div>
+    </div>
+  </header>
+
+  <section>
+    <h2>Completion checklist</h2>
+    <div class="checklist">
+      <article>
+        <h3><span class="box">☑</span>General style</h3>
+        <p class="request">Request: avoid AI-styled punctuation and match the direct tone of the other tutorials.</p>
+        <ul>
+          <li>Rewrote the modified prose in shorter, direct sentences.</li>
+          <li>Removed semicolon-heavy constructions from the revised passages and captions.</li>
+          <li>Kept scientific names, notation, and citations consistent with the R and regular Python tutorials.</li>
+        </ul>
+      </article>
+
+      <article>
+        <h3><span class="box">☑</span>1. Status section</h3>
+        <p class="request">Request: remove the complete Status section.</p>
+        <p>The heading and its full paragraph were deleted. The document now moves directly from the opening description to the Introduction.</p>
+      </article>
+
+      <article>
+        <h3><span class="box">☑</span>2. CPU and GPU presentation</h3>
+        <p class="request">Request: use A100 context, prepare an optional CPU example, and hide the whole CPU section when <code>use_CPU=False</code>.</p>
+        <ul>
+          <li>The scientific workflow now requires an active CUDA GPU and raises a clear error if JAX does not report the GPU backend.</li>
+          <li>The text identifies the A100 as the intended device.</li>
+          <li><code>use_CPU</code> defaults to <code>False</code>.</li>
+          <li>The optional CPU comparison, its heading, explanation, example code, computation, and timing table are all inside one conditional code block. Nothing executes or renders when the switch is false.</li>
+          <li>The optional comparison runs the same float64 JAX kernel in a separate CPU subprocess and on the active GPU, so it does not attempt to change JAX backends in one process.</li>
+        </ul>
+      </article>
+
+      <article>
+        <h3><span class="box">☑</span>3. Precision</h3>
+        <p class="request">Request: shorten the explanation, add <code>double_precision</code>, and compare float32 with float64.</p>
+        <ul>
+          <li>The long implementation-history paragraph was replaced by a concise scientific explanation of cancellation in the negative-binomial likelihood.</li>
+          <li><code>double_precision</code> defaults to <code>True</code> and controls <code>JAX_ENABLE_X64</code> before JAX is imported.</li>
+          <li><code>DAPHNIA_DOUBLE_PRECISION=0</code> selects float32 for the complete document, including estimation, profiles, and diagnostics.</li>
+          <li>The precision-comparison wrapper performs the complete float32 and float64 renders in separate processes and preserves both artifacts. The standard output is the second, float64 render.</li>
+          <li>A small GPU calculation also evaluates the same negative-binomial log likelihood in float32 and float64 and prints their difference in the float64 artifact.</li>
+          <li>Precision and CPU-switch values are included in the cache metadata, and the cache schema was advanced to prevent reuse of incompatible results.</li>
+        </ul>
+      </article>
+
+      <article>
+        <h3><span class="box">☑</span>4. Setup output</h3>
+        <p class="request">Request: show only the run level and <code>RL</code>, explain both, and leave package details to the environment file.</p>
+        <ul>
+          <li>The setup output now prints exactly <code>run_level</code> and <code>RL</code>.</li>
+          <li>The prose defines run levels 1, 2, and 3 and explains that <code>RL</code> holds the selected compute budget.</li>
+          <li>Python, package, source-path, commit, host, job, backend, and cache-fingerprint lines were removed from displayed setup output. Internal validation remains active.</li>
+        </ul>
+      </article>
+
+      <article>
+        <h3><span class="box">☑</span>5. Framework sentence</h3>
+        <p class="request">Request: remove “Each component is a short, self-contained Python callable.”</p>
+        <p>The sentence was removed. The preceding sentence still introduces <code>rproc</code>, <code>rinit</code>, <code>dmeas</code>, <code>rmeas</code>, and <code>partrans</code>.</p>
+      </article>
+
+      <article>
+        <h3><span class="box">☑</span>6. Three MIF run levels</h3>
+        <p class="request">Request: match the R-code run levels and default to level 2.</p>
+        <ul>
+          <li>The default changed from level 1 to level 2.</li>
+          <li>SRJF budgets now match the R and regular Python values for MIF particles, evaluation particles, repetitions, and iterations.</li>
+          <li>SIRJPF2 uses its corresponding R/Python budgets, including 300 MIF iterations at level 2.</li>
+          <li>The start counts are 3, 9, and 18 so every run level contains balanced good, medium, and poor start categories.</li>
+        </ul>
+        <table>
+          <thead><tr><th>Model and level</th><th>MIF particles</th><th>Evaluation particles</th><th>MIF iterations</th><th>PF repetitions</th></tr></thead>
+          <tbody>
+            <tr><td>SRJF 1 / 2 / 3</td><td>50 / 500 / 1000</td><td>50 / 600 / 1000</td><td>2 / 320 / 250</td><td>2 / 10 / 20</td></tr>
+            <tr><td>SIRJPF2 1 / 2 / 3</td><td>50 / 500 / 1000</td><td>50 / 500 / 1000</td><td>2 / 300 / 250</td><td>2 / 10 / 10</td></tr>
+          </tbody>
+        </table>
+      </article>
+
+      <article>
+        <h3><span class="box">☑</span>7. Starting-point and PIF/MPIF comparisons</h3>
+        <p class="request">Request: use visibly different start quality, keep hyperparameters matched, report statistics and traces, and compare PIF with MPIF from medium starts.</p>
+        <ul>
+          <li>Good starts use the exact tutorial vector plus small log-scale jitter of 0.08. Medium starts use 0.45. Poor starts use 1.0.</li>
+          <li>All quality groups share the same particles, iterations, random-walk standard deviations, cooling, and final particle-filter evaluation.</li>
+          <li>The SRJF output now reports each start's initial likelihood, terminal likelihood, MCSE, and improvement, plus grouped means and the best terminal value.</li>
+          <li>The SRJF trace figure is colored by good, medium, and poor start quality.</li>
+          <li>The unit-specific PIF/MPIF comparison uses the same medium-quality starts for both methods.</li>
+          <li>The PIF/MPIF figure now contains convergence traces with interquartile bands and paired final likelihoods with MCSE.</li>
+          <li>A descriptive speed table reports the first iteration reaching 90% of each method's median trace gain.</li>
+        </ul>
+      </article>
+
+      <article>
+        <h3><span class="box">☑</span>8. MCAP</h3>
+        <p class="request">Request: use 95% only, remove focal-value and sensitivity tables, and show one well-identified and one weakly identified case.</p>
+        <ul>
+          <li><code>MCAP_LEVEL</code> is fixed at 0.95 and passed explicitly to every MCAP fit.</li>
+          <li>The raw profile audit tables and alternate-span/coarser-grid sensitivity tables were removed.</li>
+          <li><code>theta_Sn</code> is presented as the well-identified example.</li>
+          <li><code>theta_Jn</code> is presented as the weakly identified example.</li>
+          <li>Each example retains its profile figure and a concise 95% interval and standard-error summary.</li>
+        </ul>
+      </article>
+
+      <article>
+        <h3><span class="box">☑</span>9. Apply the same principles in Section 2</h3>
+        <p class="request">Request: apply the Section 1 changes to SIRJPF2.</p>
+        <ul>
+          <li>Section 2 now uses its matched three-level R/Python compute budget.</li>
+          <li>It compares balanced good, medium, and poor all-shared starts.</li>
+          <li>It prints initial, terminal, MCSE, improvement, and grouped start-quality summaries.</li>
+          <li>It includes a start-quality trace figure.</li>
+          <li>Its unit-specific PIF/MPIF example uses common medium starts and reports both speed and terminal likelihood comparisons.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>Python chunk compilation</td><td><span class="status done">Passed</span></td><td>All 40 Python chunks compile.</td></tr>
+        <tr><td>Whitespace and patch integrity</td><td><span class="status done">Passed</span></td><td><code>git diff --check</code> reports no errors.</td></tr>
+        <tr><td>Removed-item scan</td><td><span class="status done">Passed</span></td><td>No Status section, obsolete start helper, raw MCAP table, MCAP sensitivity table, A40 claim, or level-1 default remains.</td></tr>
+        <tr><td>CPU computation in current run</td><td><span class="status done">Disabled</span></td><td><code>use_CPU=False</code>. The CPU block produces no output and executes no branch body.</td></tr>
+        <tr><td>Run-level-2 numerical execution</td><td><span class="status pending">Pending</span></td><td>Must run on the ResearchGrid A100. Local CPU execution was intentionally not used.</td></tr>
+        <tr><td>Rendered numerical and visual review</td><td><span class="status pending">Pending</span></td><td>After the cluster render, inspect the start tables, trace ascent, MCAP figures, PIF/MPIF speed statistic, and all finite outputs.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Complete float32 versus float64 comparison</h2>
+    <p>Run the comparison wrapper once on the allocated A100. It attempts a complete diagnostic float32 artifact, starts a fresh process for the complete float64 render, and leaves the normal tutorial HTML in float64. If float32 fails numerically, the wrapper still performs the required float64 run and reports the missing diagnostic.</p>
+    <pre><code>cd /user/by2418/Documents/temp/Daphnia-tutorial/Python-code
+export DAPHNIA_DOC=daphnia_tut_pypomp_advanced
+./render_gpu_precision_comparison.sh 2&gt;&amp;1 | tee daphnia_precision_comparison.log</code></pre>
+    <table>
+      <thead><tr><th>Artifact</th><th>Precision</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td><code>daphnia_tut_pypomp_advanced_float32.html</code></td><td>float32</td><td>Diagnostic comparison only</td></tr>
+        <tr><td><code>daphnia_tut_pypomp_advanced_float64.html</code></td><td>float64</td><td>Matched comparison artifact</td></tr>
+        <tr><td><code>daphnia_tut_pypomp_advanced.html</code></td><td>float64</td><td>Standard output for later work</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Run settings for the next cluster render</h2>
+    <p>Use the existing GPU wrapper. Keep the CPU comparison disabled and float64 enabled. If the scheduler has already assigned <code>CUDA_VISIBLE_DEVICES</code>, do not replace that value.</p>
+    <pre><code>cd /user/by2418/Documents/temp/Daphnia-tutorial/Python-code
+export DAPHNIA_DOC=daphnia_tut_pypomp_advanced
+export DAPHNIA_RUN_LEVEL=2
+export DAPHNIA_USE_GPU=1
+export DAPHNIA_USE_CPU=0
+export DAPHNIA_DOUBLE_PRECISION=1
+export DAPHNIA_FORCE_RECOMPUTE=1
+./render_gpu_level2.sh 2&gt;&amp;1 | tee daphnia_advanced_level2.log</code></pre>
+    <p>If you are selecting a visible device manually on an already allocated multi-GPU node, the syntax is <code>export CUDA_VISIBLE_DEVICES=0</code>, replacing <code>0</code> with the available device index shown by <code>nvidia-smi</code>.</p>
+  </section>
+
+  <section>
+    <h2>Post-render review checklist</h2>
+    <p><span class="box">☐</span>Confirm the setup output shows <code>run_level = 2</code> and the expected <code>RL</code>.</p>
+    <p><span class="box">☐</span>Confirm the float32 and float64 likelihood values are both printed and compare their difference.</p>
+    <p><span class="box">☐</span>Confirm no “Optional CPU comparison” heading or timing table appears.</p>
+    <p><span class="box">☐</span>Confirm SRJF and SIRJPF2 poor-start traces rise rather than remaining uniformly flat or non-finite.</p>
+    <p><span class="box">☐</span>Confirm each quality group has finite initial and terminal likelihood summaries.</p>
+    <p><span class="box">☐</span>Confirm the PIF/MPIF trace panel and 90%-gain iteration table are present.</p>
+    <p><span class="box">☐</span>Confirm both MCAP figures render and every reported interval is explicitly 95%.</p>
+    <p><span class="box">☐</span>Confirm there are no raw focal-value or MCAP sensitivity tables.</p>
+    <p><span class="box">☐</span>Confirm all figures are non-empty and all reported likelihoods and MCSEs are finite.</p>
+  </section>
+</main>
+</body>
+</html>

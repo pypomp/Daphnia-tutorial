@@ -65,3 +65,18 @@
 - `Python-code/render_gpu.sh`
 - `Python-code/README.md`
 - `/Users/ybb/Downloads/Research/Rpomp-Pypomp/PanelPomp-Python/run_commend.txt`
+
+## 2026-08-24 author-comment revision
+
+- The active advanced workflow is now GPU-only. It raises if JAX does not select the GPU backend, defaults to run level 2, defaults to float64, and does not silently fall back to CPU.
+- `use_CPU=False` controls a separate CPU benchmark. Its heading, explanation, example code, computation, and timing output are all inside the conditional branch, so the current render performs no CPU benchmark and shows no CPU section.
+- SRJF and SIRJPF2 run-level particle counts, repetitions, and MIF iterations now match their regular Python and R tutorial budgets. The displayed `RL` contains both model-specific level-2 budgets.
+- Starting-point comparisons now use balanced good, medium, and poor groups with log-scale jitter standard deviations 0.08, 0.45, and 1.0. The first good start is the exact tutorial vector.
+- Both model sections report initial and terminal likelihoods, MCSEs, improvements, group summaries, and start-quality traces under matched hyperparameters.
+- The unit-specific SIRJPF2 comparison now begins PIF and MPIF from identical medium-quality starts and reports a 90%-of-median-gain iteration statistic alongside traces and final likelihoods.
+- MCAP remains fixed at 95%. Raw profile and smoothing-sensitivity tables were removed, leaving one concise well-identified example and one concise weakly identified example.
+- Static validation is the strongest safe local check because executing the QMD would violate the requested GPU-only constraint. All 40 Python chunks compile, the QMD has balanced fences and unique executable labels, and `git diff --check` passes.
+- The standalone review checklist was visually inspected at desktop width. It contains ten completed implementation items, explicit pending cluster checks, two tables, and no horizontal overflow.
+- A complete float32 versus float64 comparison cannot safely switch precision inside one Jupyter process. `render_gpu_precision_comparison.sh` therefore launches two independent complete level-2 renders, retains `_float32.html` and `_float64.html`, and leaves the standard `.html` as float64.
+- The ordinary level-2 wrapper now explicitly sets `DAPHNIA_DOUBLE_PRECISION=1` and `DAPHNIA_USE_CPU=0`, so a later standard render cannot inherit the diagnostic float32 setting.
+- The comparison wrapper continues to the float64 pass even if the diagnostic float32 pass fails. This protects the standard output while honestly recording that a complete float32 comparison was unavailable.

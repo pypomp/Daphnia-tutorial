@@ -28,6 +28,8 @@ export TMPDIR=/tmp/tmpdir-$USER
 export DAPHNIA_USE_GPU=1
 export DAPHNIA_RUN_LEVEL="${DAPHNIA_RUN_LEVEL:-3}"
 export DAPHNIA_FORCE_RECOMPUTE="${DAPHNIA_FORCE_RECOMPUTE:-0}"
+export DAPHNIA_DOUBLE_PRECISION="${DAPHNIA_DOUBLE_PRECISION:-1}"
+export DAPHNIA_USE_CPU="${DAPHNIA_USE_CPU:-0}"
 
 # Let the scheduler pick the device, and do not reserve the whole card.
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
@@ -41,7 +43,7 @@ if [ ! -f "$DOC.qmd" ]; then
   exit 1
 fi
 
-echo "---RENDER: doc=$DOC run_level=$DAPHNIA_RUN_LEVEL start $(date)---"
+echo "---RENDER: doc=$DOC run_level=$DAPHNIA_RUN_LEVEL x64=$DAPHNIA_DOUBLE_PRECISION start $(date)---"
 nvidia-smi 2>&1 | head -10
 
 # Set the previously published document aside rather than deleting it. A

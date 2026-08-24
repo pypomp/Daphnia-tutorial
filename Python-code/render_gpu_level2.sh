@@ -7,6 +7,8 @@
 # defaults.
 export DAPHNIA_RUN_LEVEL=2
 export DAPHNIA_FORCE_RECOMPUTE=1
+export DAPHNIA_DOUBLE_PRECISION=1
+export DAPHNIA_USE_CPU=0
 export DAPHNIA_DOC="${DAPHNIA_DOC:-daphnia_tut_pypomp}"
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"

@@ -1,10 +1,10 @@
-# Task Plan: Simplify advanced Daphnia tutorial reporting
+# Task Plan: Apply 2026-08-24 advanced-tutorial review
 
 ## Goal
-Revise the advanced tutorial so it always displays computed numerical results and figures, without PASS/FAIL gates, result suppression, or automated inferential verdicts, while retaining genuine runtime and data-integrity checks.
+Apply every actionable review comment to the advanced QMD, make run level 2 the default GPU-only workflow, keep optional CPU material fully inactive and invisible when `use_CPU=False`, and produce a comprehensive HTML completion checklist.
 
 ## Current Phase
-Phase 6 transparent-reporting revision complete.
+Phase 7 review implementation complete. Numerical execution is pending on the ResearchGrid A100.
 
 ## Phases
 
@@ -51,6 +51,20 @@ Phase 6 transparent-reporting revision complete.
 - [x] Compile every Python chunk and run the level-1 structural smoke test.
 - **Status:** complete
 
+### Phase 7: Apply detailed author comments
+- [x] Remove the Status section and the specified framework sentence.
+- [x] Make run level 2 the default and align the three budgets with the comparison tutorials.
+- [x] Require a GPU for the active render and add an opt-in, fully hidden CPU comparison controlled by `use_CPU=False`.
+- [x] Add a `double_precision` switch, default it to float64, and demonstrate float32 versus float64 on the active GPU.
+- [x] Reduce setup output to a formal explanation of `run_level` and `RL`.
+- [x] Replace mildly dispersed MIF starts with labeled good, medium, and poor starts under matched settings, with numerical and trace comparisons.
+- [x] Add a matched medium-start PIF versus MPIF convergence-speed comparison for the unit-specific model.
+- [x] Simplify MCAP to two 95% examples without raw focal-value or sensitivity tables.
+- [x] Apply the same presentation and starting-point principles in Section 2.
+- [x] Create and inspect a standalone HTML checklist that maps every review comment to the change and verification.
+- [x] Add a two-process complete float32/float64 comparison and restore float64 for all standard later renders.
+- **Status:** complete
+
 ## Decisions Made
 
 | Decision | Rationale |
@@ -62,6 +76,9 @@ Phase 6 transparent-reporting revision complete.
 | Make the document name a wrapper argument | ResearchGrid batch submission may not preserve environment prefixes reliably. |
 | Modify only the advanced QMD in this implementation turn | The user requested modification of the singular attached QMD; generated HTML and cluster wrappers remain untouched. |
 | Show computed results regardless of diagnostic quality | The user will assess numerical quality manually and does not want automated publication gates or AI-styled verdict language. |
+| Default to run level 2 on GPU | This is the requested cluster run, and it prevents an accidental local CPU execution of an expensive tutorial. |
+| Keep CPU comparison opt-in and non-rendering | The reviewer requested that the entire CPU block disappear when `use_CPU=False`; the current requested run must perform no CPU computation. |
+| Use 95% MCAP only | The review explicitly rejects adjustable confidence levels and raw focal-value/sensitivity output. |
 
 ## Errors Encountered
 
