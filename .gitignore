@@ -16,7 +16,7 @@
 # and the vendored libs that went into them, plus the packaging intermediate
 # that render_gpu.sh renames over the published file.
 Python-code/*_files/
-Python-code/*_standalone.html
+#Python-code/*_standalone.html
 R-code/*_files/
 # Quarto 1.4 leaves the unexecuted notebook behind when a render fails, and
 # render_gpu.sh parks the last published document here while it rebuilds.
