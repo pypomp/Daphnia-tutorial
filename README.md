@@ -10,29 +10,22 @@ Instead, it focuses on guiding the reader through issues involved in the practic
 
 * The [Python version of the tutorial](Python-code) uses the Python package [`pypomp`](https://github.com/pypomp). It is designed to run on a GPU, but will also run on a multi-core CPU.
   The rendered document is [`daphnia_tut_pypomp.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_pypomp.html), covering model construction, PIF and MPIF estimation, and the four diagnostics.
-  A second document, [`daphnia_tut_pypomp_advanced.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_pypomp_advanced.html), goes further: it adds numerical validation gates, profile screening, a CPU/GPU section and per-section timings. It is **work in progress** — several of its own numerical gates do not pass, so it is not a manuscript reproduction.
+  A second document, [`daphnia_tut_pypomp_advanced.html`](https://pypomp.github.io/Daphnia-tutorial/Python-code/daphnia_tut_pypomp_advanced.html), goes further: it adds numerical validation gates, profile screening, a CPU/GPU section and per-section timings.
 
-The two languages give the same models, starting values and algorithmic
-settings, so their results agree up to Monte Carlo error. Two differences are
-worth knowing before comparing numbers. Random number streams cannot be made to
-correspond between `panelPomp` and `pypomp`, so individual searches differ even
-where the method is identical. And `pomp` computes in double precision while
-JAX defaults to single, so the Python tutorial sets `JAX_ENABLE_X64=1`; without
-it a particle filter can return log-likelihoods that are not merely imprecise
-but impossible.
+The two languages give the same models, starting values and algorithmic settings, so their results agree up to Monte Carlo error. 
+Two differences are worth knowing before comparing numbers. Random number streams cannot be made to correspond between `panelPomp` and `pypomp`, so individual searches differ even where the method is identical. 
+Also, note that R `pomp` computes in double precision while JAX defaults to single, so the Python tutorial sets `JAX_ENABLE_X64=1`; without it a particle filter can return log-likelihoods that are not merely imprecise but impossible.
+For some Pypomp applications, 32-bit precision has been found to be sufficient, but for this example it is necessary to use 64-bit.
 
 ### Reproducing the tutorials
 The R version needs `pomp`, `panelPomp` and `tidyverse`; see
 [`R-code`](R-code).
 
-The Python version was produced with an exact Pypomp revision; the advanced
-tutorial stops with an error if a different one is installed, while
-`daphnia_tut_pypomp.qmd` does not check, so verify it yourself. Three files
-are enough to reproduce it —
+The Python version was produced with an exact Pypomp version; the advanced tutorial stops with an error if a different one is installed, while `daphnia_tut_pypomp.qmd` does not check, so verify it yourself. 
+Three files are enough to reproduce it —
 `Python-code/daphnia_tut_pypomp.qmd`, `Python-code/bib-daphnia.bib` and
-`data/Mesocosmdata.xls` — plus Quarto and the pinned Pypomp checkout. Point
-Quarto at the right interpreter with `QUARTO_PYTHON`. See
-[`Python-code`](Python-code) for the exact commit, the GPU settings and the run
-levels.
+`data/Mesocosmdata.xls` — plus Quarto and the pinned Pypomp checkout. 
+Point Quarto at the right interpreter with `QUARTO_PYTHON`. 
+See [`Python-code`](Python-code) for the exact commit, the GPU settings and the run levels.
 
 Source code for this tutorial is at <https://github.com/pypomp/Daphnia-tutorial>.
