@@ -23,6 +23,11 @@ R-code/*_files/
 Python-code/*.ipynb
 Python-code/*.html.prev
 
+# Local review copies carrying the comment widget; regenerate from the
+# rendered document rather than tracking them.
+Python-code/*_comment.html
+Python-code/*_commentable.html
+
 # --- computation caches ---
 # Fingerprinted pickle caches written by the advanced Python tutorial.
 Python-code/cache_*/

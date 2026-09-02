@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Four Comments, Applied</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+:root {
+  color-scheme: light;
+  --ground:    #f6f7f9;
+  --surface:   #ffffff;
+  --sunken:    #eef1f5;
+  --ink:       #12181f;
+  --ink-muted: #5a6675;
+  --ink-faint: #8492a2;
+  --rule:      #dde2e8;
+  --rule-firm: #c3ccd6;
+  --accent:    #1f77b4;
+  --accent-sunk:#e8f1f8;
+  --attention: #a35c05;
+  --attention-sunk:#fdf3e3;
+  --alarm:     #b02a30;
+  --good:      #2f7d4f;
+  --measure:   68ch;
+  --wide:      104ch;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground:    #0e1319;
+    --surface:   #151c24;
+    --sunken:    #1b242e;
+    --ink:       #e6ebf1;
+    --ink-muted: #9aa8b8;
+    --ink-faint: #748394;
+    --rule:      #26313d;
+    --rule-firm: #3a4757;
+    --accent:    #6bb2e2;
+    --accent-sunk:#152633;
+    --attention: #e8a33d;
+    --attention-sunk:#2a2115;
+    --alarm:     #e2726a;
+    --good:      #6cc08c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground:    #0e1319;
+  --surface:   #151c24;
+  --sunken:    #1b242e;
+  --ink:       #e6ebf1;
+  --ink-muted: #9aa8b8;
+  --ink-faint: #748394;
+  --rule:      #26313d;
+  --rule-firm: #3a4757;
+  --accent:    #6bb2e2;
+  --accent-sunk:#152633;
+  --attention: #e8a33d;
+  --attention-sunk:#2a2115;
+  --alarm:     #e2726a;
+  --good:      #6cc08c;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.page {
+  max-width: var(--wide);
+  margin: 0 auto;
+  padding: 0 24px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 44px;
+}
+.measure { max-width: var(--measure); }
+
+h1, h2, h3, .eyebrow, .chip, th, .masthead-meta, .stat-value, .stat-label {
+  font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 600; letter-spacing: -0.015em; }
+h1 { font-size: 2.35rem; line-height: 1.12; }
+h2 { font-size: 1.45rem; line-height: 1.25; }
+h3 { font-size: 1.02rem; letter-spacing: 0.005em; }
+p { margin: 0; }
+
+code, kbd, pre, .mono, .num {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-ligatures: none;
+}
+code {
+  font-size: 0.86em;
+  background: var(--sunken);
+  border-radius: 3px;
+  padding: 0.1em 0.36em;
+  /* file stems here are long unbreakable tokens; without this they set the
+     minimum content width and push the whole page sideways on a phone. */
+  overflow-wrap: anywhere;
+}
+.stat, .block, .ba-cell, .comment, .callout, .masthead-meta span { min-width: 0; }
+a { color: var(--accent); text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+/* ---------- masthead ---------- */
+.masthead {
+  padding-top: 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 32px;
+}
+.eyebrow {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-family: "IBM Plex Mono", monospace;
+}
+.masthead-meta {
+  font-size: 0.83rem;
+  color: var(--ink-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  /* the source filename is one long token with no break opportunity */
+  overflow-wrap: anywhere;
+}
+.masthead-meta b { font-weight: 500; color: var(--ink); }
+
+.statbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.stat { background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 3px; }
+.stat-value { font-size: 1.5rem; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat-label { font-size: 0.73rem; color: var(--ink-muted); letter-spacing: 0.02em; }
+.stat-value.is-pending { color: var(--attention); }
+.stat-value.is-good { color: var(--good); }
+
+/* ---------- comment sections ---------- */
+.comment { display: flex; flex-direction: column; gap: 18px; }
+.comment-head { display: flex; flex-direction: column; gap: 8px; }
+.comment-num {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+}
+.request {
+  border-left: 2px solid var(--rule-firm);
+  padding: 2px 0 2px 18px;
+  margin: 0;
+  color: var(--ink-muted);
+  font-style: italic;
+  max-width: var(--measure);
+}
+.request cite {
+  display: block;
+  font-style: normal;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  margin-top: 8px;
+}
+.block { display: flex; flex-direction: column; gap: 8px; max-width: var(--measure); }
+.block h3 {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+.block ul { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 7px; }
+.block li::marker { color: var(--ink-faint); }
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 28px;
+  max-width: var(--wide);
+}
+.grid2 .block { max-width: none; }
+
+/* ---------- callout: the one place colour is spent ---------- */
+.callout {
+  background: var(--attention-sunk);
+  border: 1px solid var(--attention);
+  border-radius: 6px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: var(--measure);
+}
+.callout h3 { color: var(--attention); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.12em; }
+.callout p { font-size: 0.95rem; }
+
+/* ---------- tables ---------- */
+.scroller { overflow-x: auto; max-width: var(--wide); }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 520px;
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 0.87rem;
+}
+caption {
+  caption-side: top;
+  text-align: left;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding-bottom: 8px;
+}
+th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  border-bottom: 1px solid var(--rule-firm);
+  padding: 8px 14px 8px 0;
+  white-space: nowrap;
+}
+td {
+  padding: 9px 14px 9px 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+td.num, th.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+
+.chip {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 100px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.chip.pass { color: var(--good); }
+.chip.pending { color: var(--attention); }
+.chip.fixed { color: var(--accent); }
+
+/* ---------- code ---------- */
+pre {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--accent);
+  border-radius: 5px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  max-width: var(--wide);
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+pre .cmt { color: var(--ink-faint); }
+
+/* ---------- before/after ---------- */
+.ba { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; max-width: var(--wide); }
+.ba-cell { border: 1px solid var(--rule); border-radius: 5px; background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.ba-cell h4 {
+  margin: 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-faint);
+}
+.ba-cell.after h4 { color: var(--accent); }
+.ba-cell pre { border: none; border-left: none; background: var(--sunken); padding: 10px 12px; font-size: 0.78rem; }
+
+hr.sep { border: none; border-top: 1px solid var(--rule); margin: 0; }
+
+footer {
+  border-top: 1px solid var(--rule);
+  padding-top: 24px;
+  color: var(--ink-faint);
+  font-size: 0.83rem;
+  max-width: var(--measure);
+}
+@media (prefers-reduced-motion: no-preference) {
+  a { transition: opacity 0.12s ease; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="masthead">
+  <div class="eyebrow">Revision record</div>
+  <h1>Four comments, applied</h1>
+  <p class="measure" style="color:var(--ink-muted); font-size:1.05rem;">
+    Every change made to <code>daphnia_tut_pypomp_advanced.qmd</code> in response to the
+    2&nbsp;September&nbsp;2026 comment export, what it was for, and how it was checked.
+    One deviation from a literal reading is flagged below; it was put to the author and confirmed.
+  </p>
+  <div class="masthead-meta">
+    <span><b>Source</b> daphnia_tut_pypomp_advanced_standalone_comments_2026-09-02.md</span>
+    <span><b>Target</b> Python-code/daphnia_tut_pypomp_advanced.qmd</span>
+    <span><b>Date</b> 2 September 2026</span>
+  </div>
+</header>
+
+<section class="statbar">
+  <div class="stat"><span class="stat-value is-good">4 / 4</span><span class="stat-label">Comments implemented</span></div>
+  <div class="stat"><span class="stat-value is-good">42</span><span class="stat-label">Python chunks compile</span></div>
+  <div class="stat"><span class="stat-value is-good">35</span><span class="stat-label">Helper assertions pass</span></div>
+  <div class="stat"><span class="stat-value is-good">0</span><span class="stat-label">Open decisions</span></div>
+  <div class="stat"><span class="stat-value is-pending">GPU</span><span class="stat-label">Numerical run pending</span></div>
+</section>
+
+<!-- ===================== COMMENT 1 ===================== -->
+<section class="comment">
+  <div class="comment-head">
+    <div class="comment-num">Comment 01 &mdash; Starting points</div>
+    <h2>A start bad enough to fail</h2>
+  </div>
+  <blockquote class="request">
+    So, there are good, medium, poor, while 3 of them all converges. Could we figure a case that
+    the starting points is too bad, so that theh convergence is impossible or too slow?
+    <cite>&sect; Parameter Estimation via Panel Iterated Filtering</cite>
+  </blockquote>
+
+  <div class="grid2">
+    <div class="block">
+      <h3>What changed</h3>
+      <ul>
+        <li>A fourth quality, <code>extreme</code>, joins good, medium and poor. Its log-scale
+            jitter standard deviation is <span class="num">1.8</span>, against
+            <span class="num">0.08</span>, <span class="num">0.45</span> and
+            <span class="num">1.0</span> &mdash; roughly twice the poor displacement, which moves a
+            typical parameter by about a factor of six. <code>qmd:343</code></li>
+        <li>The surrounding prose does not predict what the extreme group will do. Whether it
+            recovers is reported from the run.</li>
+        <li><code>start_quality_schedule</code> now cycles four labels and requires at least four
+            starts. <code>qmd:382</code></li>
+        <li>Run-level start counts move from <span class="num">3 / 9 / 18</span> to
+            <span class="num">4 / 12 / 20</span>, so every level holds balanced groups &mdash;
+            three of each at level&nbsp;2. <code>qmd:106</code></li>
+        <li>Both model sections use the same four groups, and the SIRJPF2 PIF/MPIF comparison
+            still starts every chain from matched medium-quality vectors.</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>Why</h3>
+      <ul>
+        <li>Three groups that all converge demonstrate only that the search is robust to the
+            displacements that were tried. They cannot show where the method stops working.</li>
+        <li>A group that fails under the same budget is what turns the comparison into evidence:
+            it locates the boundary rather than asserting there isn't one.</li>
+        <li>The level-2 render bore this out. Good, medium and poor terminated at
+            <span class="num">&minus;500.83</span>, <span class="num">&minus;500.32</span> and
+            <span class="num">&minus;500.67</span> on average &mdash; indistinguishable. The best
+            run came from a <em>poor</em> start.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout">
+    <h3>A judgement call worth knowing about</h3>
+    <p>
+      This started at <span class="num">2.5</span> and was reduced to <span class="num">1.8</span>
+      on review. The measurement model returns a fixed <span class="num">&minus;150</span> for each
+      violating observation, which floors the SRJF panel likelihood at
+      <span class="num">&minus;150 &times; 10 &times; 10 = &minus;15,000</span>. A start displaced
+      far enough to violate every bound sits on a <em>flat</em> penalty surface where MIF has no
+      gradient at all &mdash; so it would demonstrate the tutorial's own soft-constraint device,
+      not the limits of panel iterated filtering. The displacement is now large enough to defeat
+      the budget while normally staying evaluable.
+    </p>
+    <p>
+      It is still a chosen number, not a derived one, and it could land either side of the target:
+      recoverable after all, or far enough out that every chain returns <code>-inf</code> and the
+      group has no plottable trace.
+    </p>
+    <p>
+      The second case used to be the dangerous one, because a group with no finite likelihood
+      simply disappears from the figure &mdash; which is precisely how a failed start would hide.
+      The speed table is therefore built from the groups that were <em>started</em>, not the ones
+      that produced curves, so an all-<code>-inf</code> group appears as explicit
+      <code>NaN</code> rows and is named in a printed line beneath the table.
+    </p>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- ===================== COMMENT 2 ===================== -->
+<section class="comment">
+  <div class="comment-head">
+    <div class="comment-num">Comment 02 &mdash; Figure 2</div>
+    <h2>One axis, connected markers</h2>
+  </div>
+  <blockquote class="request">
+    Please unifiy the y-axis scale for two subfigures, and instead of bar plot, use line plot
+    where x-axis is the mean, dot and lines represents each bucket's log lik
+    <cite>&sect; Diagnostic 1: Parameter Scaling Verification</cite>
+  </blockquote>
+
+  <div class="grid2">
+    <div class="block">
+      <h3>What changed</h3>
+      <ul>
+        <li>Both panels now share one vertical axis (<code>sharey=True</code>).</li>
+        <li>Bars are replaced by a marker per unit joined by a line, with each panel's mean over
+            finite units drawn as a dashed reference. <code>qmd:1467</code></li>
+        <li>A <code>-Inf</code> unit is placed just below the lowest finite unit and labelled,
+            rather than being allowed to set the axis limits.</li>
+        <li>The caption is rewritten to say what the shared axis does to the well-scaled panel.</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>Why</h3>
+      <ul>
+        <li>The old version drew bars measured from <em>each panel's own mean</em> on
+            <em>independent</em> axes. Two quantities that differ by roughly
+            <span class="num">140</span> log units per unit were rendered at the same visual
+            size, which made them look comparable.</li>
+        <li>On a shared axis the well-scaled profile compresses to a near-flat line at the top.
+            That compression is the finding: the between-unit variation that matters under
+            correct scaling is small next to the cost of getting the scaling wrong.</li>
+        <li>Connected markers are also what <code>daphnia_tut_pypomp.qmd</code> and the R
+            tutorial already use for this figure, so the three documents now agree.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- ===================== COMMENT 3 ===================== -->
+<section class="comment">
+  <div class="comment-head">
+    <div class="comment-num">Comment 03 &mdash; Figure 4</div>
+    <h2>Convergence speed, measured</h2>
+  </div>
+  <blockquote class="request">
+    Please figure out a way to show that the difference of speed of three cases (now 4 cases')
+    convergence speed, and probably no need to show all points, just show each cases' smooth
+    curve.
+    <cite>&sect; Diagnostic 3: MIF searches visualization</cite>
+  </blockquote>
+
+  <div class="grid2">
+    <div class="block">
+      <h3>What changed</h3>
+      <ul>
+        <li>Individual chains and their scatter points are gone. Each quality group is drawn as
+            one smoothed median curve with an interquartile band.
+            <code>qmd:1725</code>, <code>qmd:3107</code></li>
+        <li>The figure has two panels. The left is the log likelihood itself, over its full
+            range, which is where a group on a separate track is visible at all. The right is the
+            <em>remaining distance to the best final median, on a logarithmic axis</em>: there a
+            constant rate of approach is a straight line whatever the starting distance, so the
+            four slopes are directly comparable &mdash; which is what &ldquo;difference of speed&rdquo;
+            means. <code>plot_quality_curves</code>, <code>qmd:236</code></li>
+        <li>A single linear panel put the extreme group 1800 log units below the rest and flattened
+            the three that converge into one line &mdash; satisfying Comment&nbsp;1 at the cost of
+            Comment&nbsp;3. Merely zooming the second panel was not enough either: medium and poor
+            start 500&ndash;700 log units apart, so on a linear zoom the good group is still flat
+            against the top.</li>
+        <li>A new printed table gives the speed measure directly, timed against
+            <em>one target shared by every group</em>: the best final median any group reached,
+            less 10 log units. Every row then answers the same question &mdash; how many iterations
+            until this group came within 10 log units of the best outcome?
+            <code>qmd:1754</code>, <code>qmd:3132</code></li>
+        <li>The PIF/MPIF comparison is timed against a single target spanning both methods, so the
+            slower method cannot look faster by having less ground to make up.</li>
+        <li>Smoothing is a centred rolling mean over a window of about 15% of the iterations,
+            with <code>min_periods=1</code> so the curve reaches both ends.
+            <code>qmd:210</code></li>
+        <li>The existing PIF vs MPIF comparison now uses the same helpers and the same smoothing,
+            so the two convergence figures are read the same way.</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>Why</h3>
+      <ul>
+        <li>With four groups and twelve chains the raw traces overplot, and the question asked is
+            about groups, not about what any single chain did.</li>
+        <li>A number beats an eyeball. &ldquo;Which curve rises first&rdquo; is a judgement;
+            &ldquo;90% of the median gain by iteration <span class="num">37</span>&rdquo; is
+            comparable across groups, models and run levels.</li>
+        <li>A group whose median never rises has no such iteration. It reports <code>NaN</code>
+            rather than an imputed value, which is the honest answer for a start that did not
+            converge.</li>
+        <li>The first attempt normalised by each group's own gain, and that measure could not
+            compare groups. A group starting near the maximum has almost no gain to make, so 90% of
+            it is reached instantly or &mdash; if its median does not rise &mdash; never, meaning
+            the <em>fastest</em> group could report <code>NaN</code>. A group with a large gain
+            reaches most of it early and looks fast while finishing far below everyone else. The
+            shared target removes both failure modes.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="block" style="max-width:var(--wide);">
+    <h3>A bug this exposed</h3>
+    <p class="measure">
+      The PIF/MPIF speed statistic already existed, and in the completed level-2 render it printed
+      <code>NaN</code> for both methods. Iteration&nbsp;0 records the starting parameters before
+      any likelihood has been evaluated, so its <code>logLik</code> is missing for every chain;
+      taking the median over that iteration produced a <code>NaN</code> starting value, and the
+      whole statistic silently collapsed. <code>mif_trace_curves</code> now drops iterations with
+      no finite value before taking quantiles. <code>qmd:181</code>
+    </p>
+    <div class="ba">
+      <div class="ba-cell">
+        <h4>Before &mdash; level-2 render</h4>
+<pre><code>method  initial_median  terminal_median  iteration_to_90pct_gain
+   PIF             NaN         -880.094                      NaN
+  MPIF             NaN         -871.922                      NaN</code></pre>
+      </div>
+      <div class="ba-cell after">
+        <h4>After &mdash; synthetic traces, same code path</h4>
+<pre><code>Target = best final median less 10 log units = -506.41
+  group  first_evaluated  final_median  median_gain  iters_to_target
+   good          -504.81       -500.12         4.69                1
+ medium          -553.64       -498.77        54.88               45
+   poor          -715.28       -496.41       218.87              150
+extreme         -2399.40      -2364.03        35.37              NaN
+
+Reached the target, soonest first: good at iteration 1, medium at
+iteration 45, poor at iteration 150. Did not come within 10 log units
+of the best final median: extreme.</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- ===================== COMMENT 4 ===================== -->
+<section class="comment">
+  <div class="comment-head">
+    <div class="comment-num">Comment 04 &mdash; Numeric output</div>
+    <h2>Four significant digits</h2>
+  </div>
+  <blockquote class="request">
+    Only show 4 significant number, sam apply for all in this tutorial.
+    <cite>&sect; Diagnostic 4: Monte Carlo Adjusted Profile</cite>
+  </blockquote>
+
+  <div class="grid2">
+    <div class="block">
+      <h3>What changed</h3>
+      <ul>
+        <li>Four formatting helpers in the setup chunk: <code>sf()</code> for four significant
+            digits, <code>ll()</code> for log likelihoods, <code>interval()</code> for a pair of
+            endpoints, and <code>table_text()</code> which applies the right rule per column.
+            <code>qmd:132&ndash;180</code></li>
+        <li>Every <code>print</code> and every table in the document was swept. No
+            <code>to_string(float_format=&hellip;)</code> or bare format specifier remains outside
+            the helper itself.</li>
+        <li>Raw float and <code>np.float64(&hellip;)</code> reprs are gone from the MCAP summaries,
+            which is where the sixteen-digit output you selected was coming from.</li>
+        <li><code>difference_from_float64</code> takes the four-significant-digit rule, not the
+            log-likelihood one. It is a precision residual, and showing its magnitude is the whole
+            point of that block; at two decimal places a small float32 error would print
+            <code>0.00</code> and contradict the paragraph above it.</li>
+        <li>The document now states its numeric convention in the introduction, so a reader knows
+            the rule without inferring it.</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>Why</h3>
+      <ul>
+        <li>The selected block printed values such as
+            <code>-0.3494616301710143</code>; sixteen digits assert a precision the Monte Carlo
+            estimate does not have.</li>
+        <li>Column-by-column dispatch, rather than one global float format, keeps a parameter
+            value and its standard error on the rule that suits each.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout">
+    <h3>Deviation &mdash; confirmed by the author</h3>
+    <p>
+      Applied literally, four significant digits turns a panel log likelihood of
+      <span class="num">&minus;498.954178</span> into <span class="num">&minus;499.0</span>. This
+      document's central comparisons are differences of that quantity at the scale of its Monte
+      Carlo standard error: the level-2 SRJF fit sits <span class="num">&minus;0.17</span> from the
+      stored reference with a combined MCSE of <span class="num">0.46</span>. At four significant
+      digits that difference is not representable, and every reference and AIC comparison in the
+      document loses its meaning.
+    </p>
+    <p>
+      So log likelihoods and their differences are given to <strong>two decimal places</strong>
+      instead, and everything else &mdash; parameters, standard errors, coefficients of variation,
+      timings, ratios &mdash; takes the four-significant-digit rule you asked for. Put to the
+      author on 2&nbsp;September&nbsp;2026 and confirmed: log likelihoods stay at two decimal
+      places.
+    </p>
+  </div>
+
+  <div class="scroller">
+    <table>
+      <caption>The rule, on values from the level-2 render</caption>
+      <thead>
+        <tr><th>Quantity</th><th>Printed before</th><th>Printed now</th><th>Rule</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>MCAP MLE, log scale</td><td class="num">-0.3494616301710143</td><td class="num">-0.3495</td><td>4 s.f.</td></tr>
+        <tr><td>95% CI, natural scale</td><td class="num">(np.float64(0.46394877707717486), &hellip;)</td><td class="num">(0.4639, 1.377)</td><td>4 s.f.</td></tr>
+        <tr><td>Parameter <code>theta_Jn</code></td><td class="num">0.00113162</td><td class="num">0.001132</td><td>4 s.f.</td></tr>
+        <tr><td>Monte Carlo SE</td><td class="num">0.324193</td><td class="num">0.3242</td><td>4 s.f.</td></tr>
+        <tr><td>Panel log likelihood</td><td class="num">-498.954178</td><td class="num">-498.95</td><td>2 d.p.</td></tr>
+        <tr><td>Difference from reference</td><td class="num">-0.17</td><td class="num">-0.17</td><td>2 d.p.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- ===================== BEYOND ===================== -->
+<section class="comment">
+  <div class="comment-head">
+    <div class="comment-num">Beyond the four comments</div>
+    <h2>One blocker, removed</h2>
+  </div>
+  <div class="block">
+    <p>
+      The completed float64 level-2 render exists as
+      <code>daphnia_tut_pypomp_advanced_standalone.html</code>, but it was never published. The
+      run finished, packaged, and then failed the release gate, so <code>render_gpu.sh</code>
+      restored the previous document &mdash; which is why the published
+      <code>daphnia_tut_pypomp_advanced.html</code> still shows the old run levels and the raw
+      MCAP tables you had asked to remove.
+    </p>
+    <p>
+      The gate was <code>validate_tutorial_html.py</code> requiring the string
+      <span class="mono">&ldquo;not itself peer-reviewed&rdquo;</span>, which lived in the Status
+      section your earlier review had deleted. The sentinel is replaced by
+      <span class="mono">&ldquo;Complete tutorial precision:&rdquo;</span> &mdash; a line every
+      render prints, and the claim most worth guarding, since a document whose stated precision is
+      missing should not be published.
+    </p>
+    <p>
+      The existing render now passes that gate unchanged:
+      <code>Structural validation: PASS &middot; Numerical validation: PASS &middot; exit=0</code>.
+    </p>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- ===================== REVIEW ===================== -->
+<section class="comment">
+  <div class="comment-head">
+    <div class="comment-num">Adversarial review</div>
+    <h2>What a second pass changed</h2>
+  </div>
+  <div class="block">
+    <p>
+      A separate reviewer audited the implementation against your four comments before this record
+      was finalised. Every finding it raised was accepted and applied; they are listed here so the
+      record shows what the first attempt got wrong. It also confirmed that a whole group going
+      non-finite is still reported honestly, that the C3 bug fix is real, and that the C4 deviation
+      is disclosed in the rendered prose.
+    </p>
+  </div>
+  <div class="scroller">
+    <table>
+      <caption>Findings accepted and applied</caption>
+      <thead><tr><th>Finding</th><th>Change</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>A single-panel trace figure lets the extreme group flatten the three that converge
+              &mdash; reintroducing, in Comment&nbsp;3's figure, the defect Comment&nbsp;2 raised.</td>
+          <td>Two panels: the log likelihood, and the remaining gap to the best final median on a
+              log axis, where all four approach rates are comparable.</td>
+        </tr>
+        <tr>
+          <td>The prose asserted that the extreme group would not recover &mdash; a prediction
+              printed as a finding, in a document that cannot be run without the A100. Last run,
+              the best of all nine starts was a <em>poor</em> one.</td>
+          <td>The claim is gone. <code>describe_arrivals</code> generates the sentence from the
+              computed table, naming which groups reached the target and in what order.</td>
+        </tr>
+        <tr>
+          <td>Boolean filtering then column assignment in <code>mif_trace_curves</code> would emit
+              a <code>SettingWithCopyWarning</code> into three chunk outputs under pandas 2.x.</td>
+          <td>One <code>.copy()</code>. <code>qmd:193</code></td>
+        </tr>
+        <tr>
+          <td>The <code>-Inf</code> relocation offset was sized against one panel's spread, written
+              before the axes were shared; on the shared axis the marker could sit visually on the
+              line.</td>
+          <td>Offset now measured against the union of both panels' finite values.</td>
+        </tr>
+        <tr>
+          <td>Smoothing makes a curve's plotted starting height an average over its first
+              iterations, which can differ from the value the adjacent table reports.</td>
+          <td>Stated in the caption.</td>
+        </tr>
+        <tr>
+          <td>A mean labelled &ldquo;over finite units&rdquo; used <code>nanmean</code>, which does
+              not exclude <code>-inf</code>; <code>np.set_printoptions(precision=4)</code> sets
+              decimal places, not significant digits, and printed nothing; three dead
+              assignments.</td>
+          <td>All corrected or removed.</td>
+        </tr>
+        <tr>
+          <td>A speed measure normalised per group cannot rank groups, and can hand the fastest
+              group a <code>NaN</code>.</td>
+          <td>Replaced by one shared target across all groups, and across both methods in the
+              PIF/MPIF table.</td>
+        </tr>
+        <tr>
+          <td>At jitter 2.5 the extreme starts land on the flat &minus;150 constraint floor, where
+              MIF has no gradient &mdash; a demonstration of the penalty device, not of the
+              optimiser.</td>
+          <td>Reduced to 1.8, which stays inside the feasible region.</td>
+        </tr>
+        <tr>
+          <td><code>difference_from_float64</code> was classified as a log likelihood and rounded
+              to two decimal places.</td>
+          <td>Moved to the four-significant-digit rule.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="block">
+    <p>
+      The reviewer also checked the column-by-column formatting dispatch independently across every
+      printed frame: <code>MCSE</code>, <code>wall_seconds</code> and the iteration counts correctly
+      take four significant digits, and <code>AIC</code> and <code>comparison_tolerance</code>
+      correctly take the log-likelihood rule.
+    </p>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- ===================== VERIFICATION ===================== -->
+<section class="comment">
+  <div class="comment-head">
+    <div class="comment-num">Verification</div>
+    <h2>What was checked, and what was not</h2>
+  </div>
+
+  <div class="scroller">
+    <table>
+      <caption>Static checks run against the edited source</caption>
+      <thead>
+        <tr><th>Check</th><th>Result</th><th class="num">Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Python chunk compilation</td><td>All 42 chunks compile; fences balanced</td><td><span class="chip pass">Pass</span></td></tr>
+        <tr><td>Chunk label uniqueness</td><td>No duplicates among executable labels</td><td><span class="chip pass">Pass</span></td></tr>
+        <tr><td>Cross-chunk symbol resolution</td><td>Every name resolves in execution order; 0 unresolved</td><td><span class="chip pass">Pass</span></td></tr>
+        <tr><td>Helper unit tests</td><td>35 assertions on <code>sf</code>, <code>ll</code>, <code>interval</code>, <code>table_text</code>, <code>mif_trace_curves</code>, <code>smooth_trace</code>, <code>convergence_speed_table</code>, <code>start_quality_schedule</code></td><td><span class="chip pass">Pass</span></td></tr>
+        <tr><td>Whitespace and patch integrity</td><td><code>git diff --check</code> reports nothing</td><td><span class="chip pass">Pass</span></td></tr>
+        <tr><td>Release validator on the existing render</td><td>Structural and numerical validation both pass; exit 0</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Numerical behaviour of the changes</td><td>Not run. The document raises unless JAX reports a CUDA GPU backend, so it cannot execute on this machine</td><td><span class="chip pending">Pending</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="block">
+    <h3>What only the render can settle</h3>
+    <ul>
+      <li>Whether the <code>extreme</code> group separates as intended, converges anyway, or
+          collapses to <code>-inf</code>. Any of the three is reportable, and the document now
+          states which one happened rather than assuming; the first is the one that answers
+          Comment&nbsp;1. Note that last run the best of all nine starts came from a <em>poor</em>
+          start, so a displaced start recovering is not unlikely in this model.</li>
+      <li>Whether <code>iterations_to_target</code> returns finite, correctly ordered
+          iterations for the groups that converge. On synthetic traces it ranks them
+          <span class="num">1</span>, <span class="num">45</span>, <span class="num">150</span>,
+          <code>NaN</code>; that is verified against the same missing iteration&nbsp;0 that pypomp
+          produces, not against pypomp's own output.</li>
+      <li>Whether the shared axis in Figure&nbsp;2 leaves the well-scaled panel readable, or
+          compresses it further than you want.</li>
+      <li>Cost: level&nbsp;2 goes from 9 to 12 starts, so the two MIF search chunks and the four
+          PIF/MPIF stages each grow by about a third. The two profiles dominate the run and are
+          unchanged.</li>
+    </ul>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- ===================== RUN ===================== -->
+<section class="comment">
+  <div class="comment-head">
+    <div class="comment-num">Next run</div>
+    <h2>Both precisions on one device</h2>
+  </div>
+  <div class="block">
+    <p>
+      Set <code>DEVICE_AVAILABLE</code> to the free device index from <code>nvidia-smi</code>.
+      The wrapper renders <strong>float64 first</strong> &mdash; that is the run that gets
+      published &mdash; then starts a fresh process for the float32 diagnostic, and restores the
+      float64 document afterwards, so the standard output is never the diagnostic. JAX fixes its
+      precision when it initialises, which is why two processes are needed. Two renders of the same
+      document must not run concurrently &mdash; they share <code>DENO_DIR</code>,
+      <code>TMPDIR</code> and <code>.quarto/</code>.
+    </p>
+  </div>
+<pre><code><span class="cmt"># pick a free device</span>
+nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv
+
+conda activate py313
+cd ~/git/Daphnia-tutorial/Python-code
+
+DEVICE_AVAILABLE=0
+export CUDA_VISIBLE_DEVICES="$DEVICE_AVAILABLE"
+export DAPHNIA_DOC=daphnia_tut_pypomp_advanced
+
+<span class="cmt"># float32 diagnostic, then float64 standard, in separate processes</span>
+tmux new -d -s daphnia \
+  "./render_gpu_precision_comparison.sh &gt; daphnia_precision_comparison.log 2&gt;&amp;1"
+tmux attach -t daphnia          <span class="cmt"># detach with ctrl-b d</span></code></pre>
+  <div class="scroller">
+    <table>
+      <caption>What the comparison run leaves behind</caption>
+      <thead><tr><th>File</th><th class="num">Precision</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td><code>daphnia_tut_pypomp_advanced_float64.html</code></td><td class="num">float64</td><td>First pass. The render that gets published.</td></tr>
+        <tr><td><code>daphnia_tut_pypomp_advanced_float32.html</code></td><td class="num">float32</td><td>Second pass, diagnostic only. Expect impossible positive log likelihoods.</td></tr>
+        <tr><td><code>daphnia_tut_pypomp_advanced.html</code></td><td class="num">float64</td><td>The published document, always a copy of the float64 render</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  Prepared 2 September 2026 against
+  <code>daphnia_tut_pypomp_advanced.qmd</code>. Line references are to the file as edited.
+  Numerical values quoted from the level-2 render are from
+  <code>daphnia_tut_pypomp_advanced_standalone.html</code>.
+</footer>
+
+</div>
+</body>
+</html>

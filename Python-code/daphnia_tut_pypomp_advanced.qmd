@@ -103,15 +103,15 @@ if bool(jax.config.jax_enable_x64) != double_precision:
 RUN_LEVELS = {
     1: {
         "J": 50, "J_eval": 50, "Nmif": 2,
-        "n_starts": 3, "pf_reps": 2,
+        "n_starts": 4, "pf_reps": 2,
     },  # rapid prototype
     2: {
         "J": 500, "J_eval": 600, "Nmif": 320,
-        "n_starts": 9, "pf_reps": 10,
+        "n_starts": 12, "pf_reps": 10,
     },  # tutorial analysis
     3: {
         "J": 1000, "J_eval": 1000, "Nmif": 250,
-        "n_starts": 18, "pf_reps": 20,
+        "n_starts": 20, "pf_reps": 20,
     },  # production analysis
 }
 RL_SRJF = RUN_LEVELS[run_level]
@@ -123,6 +123,254 @@ SIRJPF_RUN_LEVELS = {
 }
 RL_SIRJPF = {**RL_SRJF, **SIRJPF_RUN_LEVELS[run_level]}
 RL = {"SRJF": RL_SRJF, "SIRJPF2": RL_SIRJPF}
+
+
+SIGFIG = 4
+
+
+def sf(value, sig=SIGFIG):
+    """Format one number to `sig` significant digits."""
+    x = float(value)
+    return str(x) if not np.isfinite(x) else f"{x:.{sig}g}"
+
+
+def ll(value, dp=2, signed=False):
+    """Format a log likelihood, or a difference of log likelihoods.
+
+    The log likelihoods here are of order 1e2 to 1e3 and are compared at the
+    scale of their Monte Carlo standard errors, so four significant digits
+    would discard exactly the differences this document reports. Two decimal
+    places remove the float repr while keeping those differences legible.
+    """
+    x = float(value)
+    if not np.isfinite(x):
+        return str(x)
+    return f"{x:+.{dp}f}" if signed else f"{x:.{dp}f}"
+
+
+def interval(values, formatter=sf):
+    """Format a pair of endpoints as an interval."""
+    return "(" + ", ".join(formatter(v) for v in values) + ")"
+
+
+# Columns carrying a log likelihood on its natural scale. Everything else in
+# a table is a parameter, a standard error, a count, or a time, and takes the
+# four-significant-digit rule.
+LL_COLUMNS = frozenset({
+    "logLik", "loglik", "log_likelihood", "AIC",
+    "initial_logLik", "panel_logLik", "terminal_logLik", "best_logLik",
+    "profile_logLik", "unrestricted_logLik", "likelihood_gap", "improvement",
+    "mean_initial_logLik", "mean_terminal_logLik", "best_terminal_logLik",
+    "mean_improvement", "terminal_minus_selected", "comparison_tolerance",
+    "first_evaluated_logLik", "final_median_logLik", "median_gain",
+    "initial_median_trace_logLik", "terminal_median_trace_logLik",
+})
+
+
+def table_text(frame):
+    """Render a DataFrame under this document's shared numeric conventions."""
+    formatters = {}
+    for column in frame.columns:
+        if frame[column].dtype.kind in "fc":
+            formatters[column] = ll if column in LL_COLUMNS else sf
+    return frame.to_string(index=False, formatters=formatters)
+
+
+def mif_trace_curves(traces, groups=None):
+    """Median and interquartile MIF trace curves, optionally grouped.
+
+    Iteration 0 records the starting parameters before any likelihood has
+    been evaluated, so its `logLik` is missing for every chain. Summarising
+    it produced a NaN first median, which in turn silently disabled the
+    convergence-speed statistic; iterations with no finite value are
+    therefore dropped before the quantiles are taken.
+    """
+    shared = traces[
+        (traces["unit"] == "shared") & (traces["method"] == "mif")
+    ].copy()
+    shared = shared[np.isfinite(shared["logLik"])].copy()
+    shared["group"] = (
+        "all" if groups is None
+        else [groups[int(i)] for i in shared["theta_idx"]]
+    )
+    return (
+        shared.groupby(["group", "iteration"])["logLik"]
+        .agg(
+            median="median",
+            lower=lambda x: x.quantile(0.25),
+            upper=lambda x: x.quantile(0.75),
+        )
+        .reset_index()
+        .sort_values(["group", "iteration"])
+    )
+
+
+def smooth_trace(values, frac=0.15):
+    """Centred rolling mean, wide enough to read as one curve per group."""
+    series = pd.Series(np.asarray(values, dtype=float))
+    window = max(3, int(round(frac * len(series))) | 1)
+    return series.rolling(window, center=True, min_periods=1).mean()
+
+
+SPEED_TOLERANCE = 10.0  # log units from the best outcome, for the speed target
+
+
+GAP_FLOOR = 0.05  # smallest gap drawn on the logarithmic panel
+
+
+def plot_quality_curves(curves, groups, title, floor=GAP_FLOOR):
+    """Draw grouped convergence curves at two complementary scales.
+
+    On a single log-likelihood axis, a group that never recovers sits far
+    enough below the rest to squash them into one indistinguishable line, so
+    two panels are drawn.
+
+    The left panel is the log likelihood itself. It carries the absolute
+    values and is where a group on a separate track is visible at all.
+
+    The right panel is the remaining distance to the best final median, on a
+    logarithmic axis. Restricting the left panel's range instead would still
+    leave groups that begin hundreds of log units apart sharing one linear
+    scale, with the best group flat against the top. On the log-gap axis a
+    constant rate of approach is a straight line whatever the starting
+    distance, so the slopes are directly comparable and they are the speeds
+    this comparison is about. Gaps at or below `floor` are drawn at `floor`,
+    since zero has no place on a logarithmic axis.
+    """
+    finals = {
+        g: float(curves[curves["group"] == g]["median"].iloc[-1])
+        for g in groups if len(curves[curves["group"] == g])
+    }
+    best_final = max(finals.values()) if finals else np.nan
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True)
+    for group in groups:
+        curve = curves[curves["group"] == group]
+        if not len(curve):
+            continue
+        colour = QUALITY_COLORS[group]
+        smoothed = smooth_trace(curve["median"])
+        axes[0].plot(curve["iteration"], smoothed,
+                     color=colour, linewidth=1.8, label=group)
+        axes[0].fill_between(
+            curve["iteration"],
+            smooth_trace(curve["lower"]),
+            smooth_trace(curve["upper"]),
+            color=colour, alpha=0.15, linewidth=0,
+        )
+        if np.isfinite(best_final):
+            gap = np.maximum(best_final - smoothed.to_numpy(dtype=float), floor)
+            axes[1].plot(curve["iteration"], gap,
+                         color=colour, linewidth=1.8, label=group)
+
+    for ax in axes:
+        ax.set_xlabel("Iteration", fontsize=FONTS["axis_label"])
+        ax.tick_params(axis="both", labelsize=FONTS["tick"])
+
+    axes[0].set_ylabel("Log likelihood", fontsize=FONTS["axis_label"])
+    axes[0].set_title(f"{title}: log likelihood", fontsize=FONTS["panel_title"])
+    axes[0].legend(title="Start", fontsize=FONTS["legend"], frameon=False)
+
+    axes[1].set_yscale("log")
+    axes[1].set_ylabel("Distance to best final median",
+                       fontsize=FONTS["axis_label"])
+    axes[1].set_title(
+        f"Remaining gap to {ll(best_final)}, log scale",
+        fontsize=FONTS["panel_title"],
+    )
+    fig.tight_layout()
+    return fig, best_final
+
+
+def describe_arrivals(speed_table, tolerance=SPEED_TOLERANCE):
+    """State, from the computed table, which groups reached the target.
+
+    The surrounding prose deliberately does not predict this. A displaced
+    start may well recover: in the previous run the best of every start was
+    a poor one. The sentence is therefore generated from the numbers.
+    """
+    arrived = speed_table.loc[
+        np.isfinite(speed_table["iterations_to_target"]), "group"
+    ].tolist()
+    missed = [g for g in speed_table["group"] if g not in arrived]
+    parts = []
+    if arrived:
+        order = speed_table.set_index("group").loc[
+            arrived, "iterations_to_target"
+        ].sort_values()
+        parts.append(
+            "Reached the target, soonest first: "
+            + ", ".join(f"{g} at iteration {sf(v)}" for g, v in order.items())
+            + "."
+        )
+    if missed:
+        parts.append(
+            "Did not come within "
+            f"{sf(tolerance)} log units of the best final median: "
+            + ", ".join(missed) + "."
+        )
+    else:
+        parts.append(
+            "Every group reached the target, so this budget recovered even "
+            "the most displaced starts."
+        )
+    return " ".join(parts)
+
+
+def convergence_speed_table(curves, groups, tolerance=SPEED_TOLERANCE):
+    """Convergence speed measured against one target shared by every group.
+
+    Normalising by each group's own gain does not compare groups. A group
+    that starts near the maximum has almost no gain to make, so 90% of it is
+    reached immediately or, if the median does not rise at all, never; a
+    group with a large gain reaches 90% of it early and looks fast without
+    ever arriving anywhere good. The target here is instead the best final
+    median any group reached, less `tolerance` log units, so every row
+    answers the same question: how many iterations did this group need to
+    come within `tolerance` of the best outcome observed? A group already
+    inside the target at its first evaluated iteration reports that
+    iteration, and a group that never arrives reports NaN.
+
+    Returns the table and the target, so the target can be printed with it.
+    """
+    finals, medians = {}, {}
+    for group in groups:
+        curve = curves[curves["group"] == group]
+        medians[group] = curve
+        finals[group] = (
+            float(curve["median"].iloc[-1]) if len(curve) else np.nan
+        )
+    finite_finals = [v for v in finals.values() if np.isfinite(v)]
+    target = (max(finite_finals) - tolerance) if finite_finals else np.nan
+
+    rows = []
+    for group in groups:
+        curve = medians[group]
+        if not len(curve) or not np.isfinite(target):
+            rows.append({
+                "group": group,
+                "first_evaluated_logLik": np.nan,
+                "final_median_logLik": np.nan,
+                "median_gain": np.nan,
+                "iterations_to_target": np.nan,
+            })
+            continue
+        med = curve["median"].to_numpy(dtype=float)
+        iters = curve["iteration"].to_numpy(dtype=float)
+        reached = np.flatnonzero(med >= target)
+        rows.append({
+            "group": group,
+            "first_evaluated_logLik": float(med[0]),
+            "final_median_logLik": float(med[-1]),
+            "median_gain": float(med[-1] - med[0]),
+            "iterations_to_target": (
+                float(iters[reached[0]]) if reached.size else np.nan
+            ),
+        })
+    return pd.DataFrame(rows), target
+
+
+QUALITY_ORDER = ("good", "medium", "poor", "extreme")
 
 
 def summarize_panel_loglik(logliks):
@@ -143,10 +391,18 @@ def summarize_panel_loglik(logliks):
 def make_quality_panel_starts(
     shared_df, unit_specific_df, seed, fixed=(), qualities=None,
 ):
-    """Create reproducible good, medium, and poor positive starts."""
+    """Create reproducible starts of graded quality, all strictly positive."""
     rng = np.random.default_rng(seed)
-    qualities = list(qualities or ("good", "medium", "poor"))
-    jitter_by_quality = {"good": 0.08, "medium": 0.45, "poor": 1.0}
+    qualities = list(qualities or QUALITY_ORDER)
+    # The extreme displacement is deliberately bounded. The measurement model
+    # returns a fixed -150 for a violating observation, so a start displaced
+    # far enough to violate every bound sits on a flat penalty surface where
+    # MIF has no gradient at all. That would demonstrate the constraint
+    # device rather than the optimiser. 1.8 is roughly twice the poor
+    # displacement while normally remaining evaluable.
+    jitter_by_quality = {
+        "good": 0.08, "medium": 0.45, "poor": 1.0, "extreme": 1.8,
+    }
     starts = []
     fixed = set(fixed)
     for i, quality in enumerate(qualities):
@@ -184,11 +440,16 @@ def make_quality_panel_starts(
 
 
 def start_quality_schedule(n_starts):
-    """Return one good start followed by balanced medium and poor starts."""
-    if n_starts < 3:
-        raise ValueError("At least three starts are needed for this comparison")
-    labels = ["good", "medium", "poor"]
-    return [labels[i % len(labels)] for i in range(n_starts)]
+    """Return balanced good, medium, poor, and extreme starts.
+
+    The extreme group exists to show a start that the tutorial's compute
+    budget does not recover from, rather than four groups that all converge.
+    """
+    if n_starts < len(QUALITY_ORDER):
+        raise ValueError(
+            f"At least {len(QUALITY_ORDER)} starts are needed for this comparison"
+        )
+    return [QUALITY_ORDER[i % len(QUALITY_ORDER)] for i in range(n_starts)]
 
 
 def _sha256_file(path):
@@ -313,7 +574,7 @@ def print_timings(filter_prefix=None, header="Wall times (s)"):
     width = max(len(k) for k, _ in rows)
     print(header)
     for k, v in rows:
-        print(f"  {k:<{width}}  {v:7.2f}")
+        print(f"  {k:<{width}}  {sf(v):>9s}")
 
 
 # Plot-style constants used by every figure chunk in this document.
@@ -342,6 +603,14 @@ FONTS = {
     "annotation": 8,
 }
 
+# One colour per starting-point quality, shared by both model sections.
+QUALITY_COLORS = {
+    "good":    PALETTE["adult"],
+    "medium":  PALETTE["juvenile"],
+    "poor":    PALETTE["mif"],
+    "extreme": PALETTE["warn"],
+}
+
 ```
 
 This tutorial guides readers through implementation, using the Python package [`pypomp`](https://github.com/pypomp), of the methodology presented by the article, *Mechanistic models for panel data: Analysis of ecological experiments with four interacting species*, <https://arxiv.org/abs/2506.04508>.
@@ -365,6 +634,8 @@ We demonstrate the complete PanelPOMP workflow using two models of increasing co
 This tutorial runs on a CUDA GPU and does not fall back to CPU computation. The calculations shown here use an NVIDIA A100. Float64 is required because the negative-binomial likelihood contains differences of large `gammaln` terms that may lose substantial accuracy in float32. The `double_precision` switch is therefore `True` by default. Setting `DAPHNIA_DOUBLE_PRECISION=0` selects float32 for the complete document, including estimation, profiles, and diagnostics. A full float32 and float64 comparison must use separate render processes because JAX compilation and arrays retain the precision state in which they were created. The float32 artifact is diagnostic only. The final and subsequent standard renders use float64.
 
 The active run uses `run_level = 2`. The object `RL` contains the corresponding particle counts, MIF iterations, independent starts, and likelihood-evaluation replicates. Level 1 is a rapid prototype, level 2 is the tutorial analysis, and level 3 uses the production settings from the R and regular Python tutorials.
+
+Numerical output throughout this document is reported to four significant digits. Log likelihoods and their differences are the one exception: they are of order $10^2$ to $10^3$ and are compared at the scale of their Monte Carlo standard errors, so they are given to two decimal places, which preserves those comparisons.
 
 ```{python}
 #| label: print-setup
@@ -417,7 +688,7 @@ else:
         "log_likelihood": [ll_float32],
         "difference_from_float64": [np.nan],
     })
-print(precision_table.to_string(index=False, float_format=lambda x: f"{x:.8g}"))
+print(table_text(precision_table))
 ```
 
 ```{python}
@@ -464,8 +735,8 @@ print(json.dumps({"seconds": time.perf_counter() - t0}))
     print('subprocess.run([os.sys.executable, "-c", cpu_code], env=cpu_env)')
     print("```\n")
     print("| device | seconds |\n|---|---:|")
-    print(f"| CPU | {cpu_seconds:.6f} |")
-    print(f"| GPU | {gpu_seconds:.6f} |")
+    print(f"| CPU | {sf(cpu_seconds)} |")
+    print(f"| GPU | {sf(gpu_seconds)} |")
 ```
 
 ## Section 1: SRJF Model
@@ -951,7 +1222,7 @@ srjf_rw_sd = pp.RWSigma(
 ).geometric_cooling(0.7)
 ```
 
-Maximum likelihood estimation for PanelPOMP models is a non-convex problem with multiple local maxima. We compare labeled good, medium, and poor starting vectors. The first good start is the R tutorial vector, and the remaining good starts receive small log-scale perturbations with standard deviation 0.08. Medium starts use 0.45, and poor starts use 1.0. Every chain then uses the same MIF hyperparameters and a distinct random-number stream. The run with the highest independently evaluated final likelihood is taken as the candidate MLE.
+Maximum likelihood estimation for PanelPOMP models is a non-convex problem with multiple local maxima. We compare four labeled starting-point qualities. The first good start is the R tutorial vector, and the remaining good starts receive small log-scale perturbations with standard deviation 0.08. Medium starts use 0.45 and poor starts use 1.0. Extreme starts use 1.8, which moves a typical parameter by about a factor of six, and they are included to ask whether this compute budget can recover a start that far away. A comparison in which every group converges shows only that the search is robust to the displacements tried; it takes a group that struggles to locate where the method's limit lies. Whether the extreme group is that case is a question for the run, not an assumption: the tables and figures below report what happened, and the text does not presume the answer. Every chain uses the same MIF hyperparameters and a distinct random-number stream. The run with the highest independently evaluated final likelihood is taken as the candidate MLE.
 
 In Pypomp, this multi-start search is expressed by replicating the panel-parameter object before calling `mif`: each replicate of `panel.theta` becomes one independent chain, and a single call to `panel.mif(...)` advances all chains in parallel under JAX. After MIF, a final particle filter on the terminal estimates yields a low-variance evaluation of $\log L(\hat\phi^{(M)})$.
 
@@ -1099,22 +1370,20 @@ srjf_mle_panel_theta = pp.PanelParameters({
     ),
     "unit_specific": pd.DataFrame(index=[], columns=unit_names),
 })
-print(f"MIF + final pfilter wall: {TIMINGS['srjf_mif_search']:.1f}s")
-print(mif_summary.to_string(index=False))
+print(f"MIF + final pfilter wall: {sf(TIMINGS['srjf_mif_search'])}s")
+print(table_text(mif_summary))
 print("\nSummary by starting-point quality:")
-print(srjf_quality_summary.to_string(
-    index=False, float_format=lambda x: f"{x:.3f}",
-))
+print(table_text(srjf_quality_summary))
 print(f"Best MIF start: {best_idx}, panel logLik = "
-      f"{srjf_mif_candidate_ll:.2f} (MCSE {srjf_mif_candidate_se:.2f})")
+      f"{ll(srjf_mif_candidate_ll)} (MCSE {sf(srjf_mif_candidate_se)})")
 print(
     "Starts within the stated MCSE-based tolerance of the best: "
     f"{srjf_near_best_count} of {Nstarts}"
 )
 print(
     "Best MIF minus R starting-vector logLik: "
-    f"{srjf_change_from_start:+.2f} "
-    f"(combined MCSE {srjf_start_combined_se:.2f})"
+    f"{ll(srjf_change_from_start, signed=True)} "
+    f"(combined MCSE {sf(srjf_start_combined_se)})"
 )
 srjf_reference_ll = -498.7808
 srjf_reference_se = 0.324
@@ -1124,15 +1393,15 @@ srjf_reference_gap_se = float(np.sqrt(
 srjf_reference_difference = srjf_mif_candidate_ll - srjf_reference_ll
 print(
     "Best MIF minus stored reference logLik: "
-    f"{srjf_reference_difference:+.2f} "
-    f"(combined MCSE {srjf_reference_gap_se:.2f})"
+    f"{ll(srjf_reference_difference, signed=True)} "
+    f"(combined MCSE {sf(srjf_reference_gap_se)})"
 )
 print("\nSelected all-shared MIF parameters:")
 for k in PARAM_NAMES:
-    print(f"  {k:>10s}: {srjf_mle_theta[k]:.6g}")
+    print(f"  {k:>10s}: {sf(srjf_mle_theta[k])}")
 ```
 
-The good, medium, and poor starts use identical particles, iterations, perturbations, cooling, and final likelihood evaluation. Only the initial parameter displacement changes. The table reports the initial likelihood, terminal likelihood, Monte Carlo standard error, and improvement for every start, followed by a group summary. The best finite terminal parameter vector is used below. Two details of the call are useful:
+All four start qualities use identical particles, iterations, perturbations, cooling, and final likelihood evaluation. Only the initial parameter displacement changes. The table reports the initial likelihood, terminal likelihood, Monte Carlo standard error, and improvement for every start, followed by a group summary. The best finite terminal parameter vector is used below. Two details of the call are useful:
 
 - **Cooling is configured on `RWSigma`.** Calling `.geometric_cooling(0.7)` makes 0.7 the multiplicative reduction in perturbation standard deviation accumulated over fifty iterations.
 - **`block=False` selects standard PIF.** The MPIF implementation with `block=True` is demonstrated in Diagnostic 2 for the mixed SRJF model containing unit-specific adult mortality.
@@ -1153,13 +1422,13 @@ ll_per_unit_all, ll_per_unit_se_all, panel_ll_all, panel_ll_se_all = (
 )
 ll_per_unit = ll_per_unit_all[0]
 
-print(f"panel pfilter wall: {TIMINGS['srjf_start_pfilter']:.2f}s  "
+print(f"panel pfilter wall: {sf(TIMINGS['srjf_start_pfilter'])}s  "
       f"(J={RL_SRJF['J_eval']}, reps={RL_SRJF['pf_reps']})")
 print("Per-unit log-likelihood (log-mean-exp over replicates):")
 for u, v in zip(unit_names, ll_per_unit):
-    print(f"  {u}: {v:8.3f}")
-print(f"Total panel logLik: {float(panel_ll_all[0]):.3f} "
-      f"(MCSE {float(panel_ll_se_all[0]):.3f})")
+    print(f"  {u}: {ll(v):>10s}")
+print(f"Total panel logLik: {ll(panel_ll_all[0])} "
+      f"(MCSE {sf(panel_ll_se_all[0])})")
 ```
 
 A correctly scaled panel produces stable per-unit log likelihoods on the order of $-50$ for SRJF data and a substantial effective sample size (ESS) at every observation time. Deliberately mis-scaled parameter vectors with rates perturbed by several orders of magnitude yield degenerate filters whose ESS collapses toward unity. The mis-scaled counter-example below quantifies this contrast.
@@ -1233,40 +1502,49 @@ panel_ll_wrong = float(panel_ll_wrong_all[0])
 panel_se_wrong = float(panel_se_wrong_all[0])
 
 print("Well-scaled initial parameters:")
-print(f"  Panel log-likelihood: {panel_ll_correct:.2f} "
-      f"(MCSE: {panel_se_correct:.2f})")
+print(f"  Panel log-likelihood: {ll(panel_ll_correct)} "
+      f"(MCSE: {sf(panel_se_correct)})")
 print(f"  Unit-level mean range: "
-      f"[{np.nanmin(unit_ll_correct):.2f}, "
-      f"{np.nanmax(unit_ll_correct):.2f}]")
+      f"[{ll(np.nanmin(unit_ll_correct))}, "
+      f"{ll(np.nanmax(unit_ll_correct))}]")
 print()
 print("Mis-scaled parameters (f_Sn x 100):")
-print(f"  Panel log-likelihood: {panel_ll_wrong:.2f} "
-      f"(MCSE: {panel_se_wrong:.2f})")
+print(f"  Panel log-likelihood: {ll(panel_ll_wrong)} "
+      f"(MCSE: {sf(panel_se_wrong)})")
 print(f"  Unit-level mean range: "
-      f"[{np.nanmin(unit_ll_wrong):.2f}, "
-      f"{np.nanmax(unit_ll_wrong):.2f}]")
+      f"[{ll(np.nanmin(unit_ll_wrong))}, "
+      f"{ll(np.nanmax(unit_ll_wrong))}]")
 print()
 print(f"Log-likelihood difference: "
-      f"{panel_ll_correct - panel_ll_wrong:.2f}")
+      f"{ll(panel_ll_correct - panel_ll_wrong)}")
 ```
 
 The well-scaled initial parameters yield a finite panel log-likelihood with small Monte Carlo standard error, indicating stable filter performance. Mis-scaling generates severely degraded likelihood values: an $f^n_S$ that is too large drives the algal resource $F_u$ rapidly toward zero, starving the *Daphnia* population and producing simulated trajectories far below the observed adult densities. The mismatch surfaces as much more negative per-unit log-likelihoods and as inflated Monte Carlo variance, because the particle weights become dominated by a small fraction of trajectories.
 
-@fig-srjf-scaling-unit-comparison plots the unit-level contributions side by side.
+@fig-srjf-scaling-unit-comparison plots the unit-level contributions side by side on a single shared vertical axis, so the two cases are compared on one scale rather than each within its own.
 
 ```{python}
 #| label: fig-srjf-scaling-unit-comparison
 #| code-fold: true
 #| fig-width: 10
 #| fig-height: 4
-#| fig-cap: "Unit-level log-likelihood contributions under correctly scaled (left) and mis-scaled (right) parameters. Bars are measured from each panel's own mean, shown dashed, while both vertical axes retain absolute log-likelihood coordinates. Note the different scales. Mis-scaling costs roughly $140$ log units per unit and does so unevenly because the fixed $-150$ penalty applies once per violating observation."
+#| fig-cap: "Unit-level log-likelihood contributions under correctly scaled (left) and mis-scaled (right) parameters. Markers are the per-unit contributions, connected to show the profile across units, and the dashed line in each panel is that panel's mean over finite units. Both panels share one vertical axis, so the well-scaled profile is compressed to a near-flat line at the top: that compression is the size of the mis-scaling penalty. Mis-scaling costs roughly $140$ log units per unit and does so unevenly because the fixed $-150$ penalty applies once per violating observation."
 
-fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=False)
+# Connected markers on one shared vertical axis. The earlier version drew
+# bars measured from each panel's own mean on independent axes, which made
+# two very different quantities look comparable.
+fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
 
 unit_means_correct = unit_ll_correct
 unit_means_wrong   = unit_ll_wrong
+positions = np.arange(1, len(unit_names) + 1)
 
-baseline_correct = np.nanmean(unit_means_correct)
+finite_correct = np.isfinite(unit_means_correct)
+baseline_correct = (
+    float(np.mean(unit_means_correct[finite_correct]))
+    if np.any(finite_correct)
+    else np.nan
+)
 finite_wrong = np.isfinite(unit_means_wrong)
 baseline_wrong = (
     np.mean(unit_means_wrong[finite_wrong])
@@ -1274,61 +1552,57 @@ baseline_wrong = (
     else -150.0
 )
 
-axes[0].bar(
-    unit_names,
-    unit_means_correct - baseline_correct,   # height = deviation
-    bottom=baseline_correct,                 # base   = this panel's mean
-    color=PALETTE["adult"],
-)
-axes[0].axhline(
-    baseline_correct,
-    color=PALETTE["fit"],
-    linestyle="--",
-    linewidth=1.5
-)
-axes[0].set_title(
-    "Well-scaled initial parameters",
-    fontsize=FONTS["panel_title"]
-)
-axes[0].set_ylabel("Unit log-likelihood", fontsize=FONTS["axis_label"])
-axes[0].set_xlabel("Unit", fontsize=FONTS["axis_label"])
-axes[0].tick_params(axis="both", labelsize=FONTS["tick"])
-
+# A -Inf unit has no position on a log-likelihood axis. It is drawn just
+# below the lowest finite unit and labelled, so it is visible without
+# setting the axis limits from a value that is not on the scale. The offset
+# is measured against the range of the shared axis, not against the
+# mis-scaled panel alone: on one axis a fraction of that panel's own spread
+# can be too small to separate the marker from the line.
 wrong_plot = unit_means_wrong.copy()
-if np.any(~finite_wrong):
+if np.any(~finite_wrong) and np.any(finite_wrong):
+    shared_finite = np.concatenate([
+        unit_means_correct[np.isfinite(unit_means_correct)],
+        unit_means_wrong[finite_wrong],
+    ])
+    shared_span = float(np.ptp(shared_finite)) if shared_finite.size else 0.0
     wrong_plot[~finite_wrong] = (
-        np.min(unit_means_wrong[finite_wrong]) - 5.0
-        if np.any(finite_wrong)
-        else -150.0
+        float(np.min(unit_means_wrong[finite_wrong]))
+        - max(1.0, 0.05 * shared_span)
     )
-axes[1].bar(
-    unit_names,
-    wrong_plot - baseline_wrong,
-    bottom=baseline_wrong,
-    color=PALETTE["warn"],
-)
-if np.any(finite_wrong):
-    axes[1].axhline(
-        baseline_wrong,
-        color=PALETTE["fit"],
-        linestyle="--",
-        linewidth=1.5,
-    )
+elif np.any(~finite_wrong):
+    wrong_plot[~finite_wrong] = -150.0
+
+for ax, values, baseline, colour, title in (
+    (axes[0], unit_means_correct, baseline_correct, PALETTE["adult"],
+     "Well-scaled initial parameters"),
+    (axes[1], wrong_plot, baseline_wrong, PALETTE["warn"],
+     "Mis-scaled parameters ($f^n_S \\times 100$)"),
+):
+    ax.plot(positions, values, marker="o", linestyle="-", linewidth=1.2,
+            markersize=5, color=colour)
+    ax.axhline(baseline, color=PALETTE["fit"], linestyle="--", linewidth=1.5,
+               label="mean over finite units")
+    ax.set_xticks(positions)
+    ax.set_xticklabels(unit_names)
+    ax.set_xlabel("Unit", fontsize=FONTS["axis_label"])
+    ax.set_title(title, fontsize=FONTS["panel_title"])
+    ax.tick_params(axis="both", labelsize=FONTS["tick"])
+
+# One legend, on the panel whose data sits away from it. The dashed line means
+# the same thing in both, and a second copy would collide with the -Inf labels.
+axes[0].legend(fontsize=FONTS["legend"], frameon=False, loc="lower right")
+axes[0].set_ylabel("Unit log-likelihood", fontsize=FONTS["axis_label"])
 for index in np.flatnonzero(~finite_wrong):
     axes[1].annotate(
-        "-Inf", (unit_names[index], wrong_plot[index]),
-        xytext=(0, 5), textcoords="offset points", ha="center",
-        fontsize=FONTS["annotation"],
+        "-Inf", (positions[index], wrong_plot[index]),
+        xytext=(0, 6), textcoords="offset points", ha="center",
+        fontsize=FONTS["annotation"], color=PALETTE["warn"],
     )
-axes[1].set_title("Mis-scaled parameters", fontsize=FONTS["panel_title"])
-axes[1].set_ylabel("Unit log-likelihood", fontsize=FONTS["axis_label"])
-axes[1].set_xlabel("Unit", fontsize=FONTS["axis_label"])
-axes[1].tick_params(axis="both", labelsize=FONTS["tick"])
 
 fig.tight_layout()
 ```
 
-Under correctly scaled parameters, unit-level log likelihoods exhibit moderate variation reflecting differences among observed trajectories. Under mis-scaling every unit is far worse, by about $140$ log units, and the degradation is uneven. The measurement model applies its fixed $-150$ penalty once per violating observation. A unit whose trajectory violates a state bound at many times is therefore pushed lower than one with fewer violations. The spread across the mis-scaled panel counts constraint violations and is not a measure of how well the units are otherwise described. If every observation in every unit violated a bound, the panel log likelihood would reach $-150 \times U \times N = -15{,}000$.
+Under correctly scaled parameters, unit-level log likelihoods exhibit moderate variation reflecting differences among observed trajectories. On the shared axis that variation is barely visible, which is the point: it is small compared with the cost of mis-scaling. Under mis-scaling every unit is far worse, by about $140$ log units, and the degradation is uneven. The measurement model applies its fixed $-150$ penalty once per violating observation. A unit whose trajectory violates a state bound at many times is therefore pushed lower than one with fewer violations. The spread across the mis-scaled panel counts constraint violations and is not a measure of how well the units are otherwise described. If every observation in every unit violated a bound, the panel log likelihood would reach $-150 \times U \times N = -15{,}000$.
 
 The well-scaled panel filters cleanly and mis-scaling is detectable rather than silent, so we proceed to maximum-likelihood estimation. The next subsection sets the algorithmic budget and perturbation scheme that the MIF call inherits.
 
@@ -1402,7 +1676,7 @@ unit_uspec_df = pd.DataFrame(
     {u: [srjf_mle_theta[k] for k in spec_keys] for u in unit_names},
     index=spec_keys,
 )
-panel_theta_uspec, srjf_uspec_start_qualities = make_quality_panel_starts(
+panel_theta_uspec, _ = make_quality_panel_starts(
     shared_uspec_df,
     unit_uspec_df,
     seed=300,
@@ -1495,18 +1769,18 @@ aic_table = pd.DataFrame({
     "logLik":  [best_ll,         ll_uspec_best],
     "AIC":     [aic_shared,      aic_specific],
 })
-print(f"unit-specific MIF + pfilter wall: {TIMINGS['srjf_uspec_mif']:.1f}s")
-print(aic_table.to_string(index=False))
+print(f"unit-specific MIF + pfilter wall: {sf(TIMINGS['srjf_uspec_mif'])}s")
+print(table_text(aic_table))
 print(
-    f"Embedded-null representation: {embedded_ll:.2f} "
-    f"(MCSE {embedded_se:.2f}); difference from all-shared fit: "
-    f"{embedded_difference:+.2f} "
-    f"(combined MCSE {embedded_combined_mcse:.2f})"
+    f"Embedded-null representation: {ll(embedded_ll)} "
+    f"(MCSE {sf(embedded_se)}); difference from all-shared fit: "
+    f"{ll(embedded_difference, signed=True)} "
+    f"(combined MCSE {sf(embedded_combined_mcse)})"
 )
-print(f"Delta AIC (unit-specific - all-shared): {delta_aic:+.2f}")
-print(f"Likelihood improvement: {ll_uspec_best - best_ll:+.2f}")
-print(f"Combined likelihood MCSE: {combined_mcse:.2f}")
-print(f"theta_Sn unit-specific coefficient of variation: {theta_Sn_cv:.3f}")
+print(f"Delta AIC (unit-specific - all-shared): {ll(delta_aic, signed=True)}")
+print(f"Likelihood improvement: {ll(ll_uspec_best - best_ll, signed=True)}")
+print(f"Combined likelihood MCSE: {sf(combined_mcse)}")
+print(f"theta_Sn unit-specific coefficient of variation: {sf(theta_Sn_cv)}")
 ```
 
 Replacing one shared parameter with $U$ unit-specific values adds $U-1$ free parameters. Thus, in this 10-unit panel, making $\theta^n_S$ unit-specific adds $10-1=9$ parameters. A negative $\Delta\text{AIC}$ of substantial magnitude indicates that the likelihood improvement outweighs this penalty. A positive or near-zero $\Delta\text{AIC}$ favours the all-shared model on grounds of parsimony. The embedded-null difference and combined Monte Carlo standard error are printed beside the AIC table because disagreement between equivalent parameterisations or a lower likelihood under the larger model indicates incomplete numerical optimisation.
@@ -1517,55 +1791,60 @@ The displayed table always reports the two likelihood estimates, parameter count
 
 #### Diagnostic 3: MIF searches visualization
 
-Each MIF run produces a trace of log-likelihood values across iterations. @fig-srjf-mif-traces compares good, medium, and poor starting points under the same algorithmic settings. The comparison shows whether poorer starts climb toward the same likelihood region and how much progress occurs before cooling reduces the perturbations.
+Each MIF run produces a trace of log-likelihood values across iterations. @fig-srjf-mif-traces compares the four starting-point qualities under the same algorithmic settings. Individual chains are noisy and overplot each other, so each group is shown as one smoothed median curve with an interquartile band rather than as every evaluated point. The accompanying table converts the same curves into a convergence-speed statistic. Every group is timed against one shared target, the best final median any group reached less 10 log units, so the column answers the same question for each row: how many iterations until this group came within 10 log units of the best outcome? A group already inside the target at its first evaluated iteration reports that iteration, and a group that never arrives reports NaN. Timing each group against its own gain instead would not compare groups: a group starting near the maximum has almost no gain to make, and a group with a large gain reaches most of it early while still finishing far below the others.
 
 ```{python}
 #| label: fig-srjf-mif-traces
 #| code-fold: true
-#| fig-width: 8
+#| fig-width: 10
 #| fig-height: 4
-#| fig-cap: "SRJF MIF traces from good, medium, and poor starting points under matched particle counts, iterations, perturbations, cooling, and evaluation settings."
+#| fig-cap: "SRJF MIF convergence by starting-point quality under matched particle counts, iterations, perturbations, cooling, and evaluation settings. Each curve is the smoothed median trace of one quality group; the band in the left panel is that group's interquartile range. The left panel shows the log likelihood itself over its full range. The right panel shows the remaining distance to the best final median on a logarithmic axis, where a constant rate of approach is a straight line whatever the starting distance, so the slopes are comparable across groups. Curves are smoothed with a centred rolling mean, so a curve's plotted starting height is an average over its first iterations rather than the single value the accompanying table reports. Gaps at or below 0.05 are drawn at 0.05."
 
 # Restrict to the shared-parameter rows; the unit-specific rows hold sigSn,
-# which is fixed at 0 by rw_sd and therefore uninformative.
-shared_trace = mif_traces[
-    (mif_traces["unit"] == "shared") & (mif_traces["method"] == "mif")
-].copy()
+# which is fixed at 0 by rw_sd and therefore uninformative. Chains are
+# summarised by quality group instead of drawn individually: with four
+# groups the raw traces overplot, and the question here is how fast each
+# group climbs, not what any single chain did.
+srjf_quality_curves = mif_trace_curves(mif_traces, srjf_start_qualities)
+# Groups that were started, and the subset that produced any finite
+# likelihood. A group with none cannot be drawn, but it must still be named:
+# vanishing from the figure is exactly how a failed start would be hidden.
+srjf_quality_groups = [q for q in QUALITY_ORDER if q in set(srjf_start_qualities)]
+srjf_groups_present = [
+    q for q in srjf_quality_groups
+    if q in set(srjf_quality_curves["group"])
+]
+srjf_groups_absent = [q for q in srjf_quality_groups
+                      if q not in srjf_groups_present]
 
-chain_ids = sorted(shared_trace["theta_idx"].unique())
-quality_colors = {
-    "good": PALETTE["adult"],
-    "medium": PALETTE["juvenile"],
-    "poor": PALETTE["warn"],
-}
-
-fig, ax = plt.subplots(figsize=(8, 4))
-used_labels = set()
-for chain_id in chain_ids:
-    quality = srjf_start_qualities[int(chain_id)]
-    color = quality_colors[quality]
-    sub = shared_trace[shared_trace["theta_idx"] == chain_id]
-    sub = sub[np.isfinite(sub["logLik"])].sort_values("iteration")
-    ax.plot(
-        sub["iteration"], sub["logLik"],
-        color=color, alpha=0.65, linewidth=0.9,
-        label=quality if quality not in used_labels else None,
-    )
-    used_labels.add(quality)
-    ax.scatter(
-        sub["iteration"], sub["logLik"],
-        color=color, alpha=0.6, s=10,
-    )
-ax.set_xlabel("Iteration", fontsize=FONTS["axis_label"])
-ax.set_ylabel("Log-likelihood", fontsize=FONTS["axis_label"])
-ax.set_title("SRJF MIF traces by starting-point quality",
-             fontsize=FONTS["panel_title"])
-ax.tick_params(axis="both", labelsize=FONTS["tick"])
-ax.legend(title="Start", fontsize=FONTS["legend"], frameon=False)
-fig.tight_layout()
+fig, srjf_curve_best = plot_quality_curves(
+    srjf_quality_curves, srjf_groups_present, "SRJF MIF convergence",
+)
 ```
 
-The initial and terminal likelihood table quantifies improvement, while the traces show when that improvement occurs. A poor start that rises toward the terminal region demonstrates recovery from a deliberately displaced parameter vector. Persistent separation between start groups indicates that additional starts or a broader search may be needed. Production SRJF results are reported in Section S9 of the Supplement.
+```{python}
+#| label: srjf-convergence-speed
+#| code-fold: true
+
+srjf_speed_table, srjf_speed_target = convergence_speed_table(
+    srjf_quality_curves, srjf_quality_groups
+)
+print(
+    "Convergence speed by starting-point quality. Target is the best final "
+    f"median less {sf(SPEED_TOLERANCE)} log units = {ll(srjf_speed_target)}:"
+)
+print(table_text(srjf_speed_table))
+print(describe_arrivals(srjf_speed_table))
+if srjf_groups_absent:
+    print(
+        "No finite MIF trace at any iteration for: "
+        + ", ".join(srjf_groups_absent)
+        + ". These starts are shown in the table above as NaN and are absent "
+        "from the figure because they have no plottable value."
+    )
+```
+
+The initial and terminal likelihood table quantifies improvement, while the curves show when that improvement occurs. A poor start that rises toward the terminal region demonstrates recovery from a deliberately displaced parameter vector. The extreme group is displaced by a log-scale standard deviation of 1.8 and so begins far below the others. Whether the same budget that moves the poor starts also recovers it is settled by the table above, not here; the sentence printed beneath it states which groups came within 10 log units of the best final median and which did not. The displacement is bounded on purpose. The measurement model returns a fixed $-150$ for each violating observation, so a start thrown far enough to violate every bound would sit on a flat penalty surface with no gradient for MIF to follow. That would demonstrate the constraint device rather than the optimiser, so the extreme jitter is set at 1.8, roughly twice the poor displacement, while normally remaining evaluable. Persistent separation of this kind is what indicates that additional starts, more iterations, or a broader search are needed; it is not evidence that the algorithm is wrong. Production SRJF results are reported in Section S9 of the Supplement.
 
 Trace patterns also guide tuning. Erratic trajectories can indicate that $J$ is too small relative to the state dimension and measurement model. Remedies include increasing $J$, modestly enlarging `rw_sd`, or slowing the cooling schedule by raising $a$ from 0.7 to 0.8. Sudden log-likelihood drops warrant checking parameter scales, state bounds, and the log transform in `srjf_par_trans`. Large differences between the best and median terminal values suggest that more independent searches are needed.
 
@@ -1812,7 +2091,7 @@ if mcap_Sn_warnings:
     for message in mcap_Sn_warnings:
         print(f"    - {message}")
 
-print(f"theta_Sn profile wall: {TIMINGS['srjf_profile_theta_Sn']:.1f}s "
+print(f"theta_Sn profile wall: {sf(TIMINGS['srjf_profile_theta_Sn'])}s "
       f"(nprof={nprof_Sn}, starts={nprof_Sn}, J={J_mif}, M={M_mif})")
 
 mif_log_Sn = float(np.log(srjf_mle_theta[focal_Sn]))
@@ -1827,20 +2106,20 @@ profile_gap_se_Sn = float(np.sqrt(
 ))
 mcap_Sn_ci = _mcap_ci_array(mcap_Sn)
 print("95% MCAP summary for theta_Sn:")
-print(f"    MLE (log / natural): {mcap_Sn.mle} / {np.exp(mcap_Sn.mle)}")
-print(f"    95% CI (log): {tuple(mcap_Sn.ci)}")
+print(f"    MLE (log / natural): {sf(mcap_Sn.mle)} / {sf(np.exp(mcap_Sn.mle))}")
+print(f"    95% CI (log): {interval(mcap_Sn_ci)}")
 if np.all(np.isfinite(mcap_Sn_ci)):
-    print(f"    95% CI (natural): {tuple(np.exp(mcap_Sn_ci))}")
+    print(f"    95% CI (natural): {interval(np.exp(mcap_Sn_ci))}")
 print(
     "    se_stat / se_mc / se_total: "
-    f"{mcap_Sn.se_stat} / {mcap_Sn.se_mc} / {mcap_Sn.se_total}"
+    f"{sf(mcap_Sn.se_stat)} / {sf(mcap_Sn.se_mc)} / {sf(mcap_Sn.se_total)}"
 )
 print(
     "    raw profile maximum minus unrestricted logLik: "
-    f"{profile_max_gap_Sn:+.6g} "
-    f"(combined MCSE {profile_gap_se_Sn:.6g})"
+    f"{ll(profile_max_gap_Sn, signed=True)} "
+    f"(combined MCSE {sf(profile_gap_se_Sn)})"
 )
-print(f"    unrestricted MIF estimate (log): {mif_log_Sn}")
+print(f"    unrestricted MIF estimate (log): {sf(mif_log_Sn)}")
 ```
 
 ```{python}
@@ -1958,7 +2237,7 @@ if mcap_Jn_warnings:
     for message in mcap_Jn_warnings:
         print(f"    - {message}")
 
-print(f"theta_Jn profile wall: {TIMINGS['srjf_profile_theta_Jn']:.1f}s "
+print(f"theta_Jn profile wall: {sf(TIMINGS['srjf_profile_theta_Jn'])}s "
       f"(nprof={nprof_Jn}, starts={nprof_Jn}, J={J_mif}, M={M_mif})")
 
 # As for theta_Sn: assess the fitted profile, not points already excluded.
@@ -1971,20 +2250,20 @@ mcap_Jn_combined_se = float(np.sqrt(
 profile_max_gap_Jn = float(ll_grid_Jn[raw_max_idx_Jn] - best_ll)
 mcap_Jn_ci = _mcap_ci_array(mcap_Jn)
 print("95% MCAP summary for theta_Jn:")
-print(f"    MLE (log / natural): {mcap_Jn.mle} / {np.exp(mcap_Jn.mle)}")
-print(f"    95% CI (log): {tuple(mcap_Jn.ci)}")
+print(f"    MLE (log / natural): {sf(mcap_Jn.mle)} / {sf(np.exp(mcap_Jn.mle))}")
+print(f"    95% CI (log): {interval(mcap_Jn_ci)}")
 if np.all(np.isfinite(mcap_Jn_ci)):
-    print(f"    95% CI (natural): {tuple(np.exp(mcap_Jn_ci))}")
+    print(f"    95% CI (natural): {interval(np.exp(mcap_Jn_ci))}")
 print(
     "    se_stat / se_mc / se_total: "
-    f"{mcap_Jn.se_stat} / {mcap_Jn.se_mc} / {mcap_Jn.se_total}"
+    f"{sf(mcap_Jn.se_stat)} / {sf(mcap_Jn.se_mc)} / {sf(mcap_Jn.se_total)}"
 )
 print(
     "    raw profile maximum minus unrestricted logLik: "
-    f"{profile_max_gap_Jn:+.6g} "
-    f"(combined MCSE {mcap_Jn_combined_se:.6g})"
+    f"{ll(profile_max_gap_Jn, signed=True)} "
+    f"(combined MCSE {sf(mcap_Jn_combined_se)})"
 )
-print(f"    unrestricted MIF estimate (log): {np.log(focal_mle_Jn)}")
+print(f"    unrestricted MIF estimate (log): {sf(np.log(focal_mle_Jn))}")
 ```
 
 ```{python}
@@ -2574,17 +2853,17 @@ sirjpf_unit_ll0_all, sirjpf_unit_se0_all, sirjpf_panel_ll0_all, sirjpf_panel_se0
 )
 sirjpf_panel_ll0 = float(sirjpf_panel_ll0_all[0])
 sirjpf_panel_se0 = float(sirjpf_panel_se0_all[0])
-print(f"panel pfilter wall: {TIMINGS['sirjpf_smoke_pfilter']:.2f}s "
+print(f"panel pfilter wall: {sf(TIMINGS['sirjpf_smoke_pfilter'])}s "
       f"(J={RL_SIRJPF['J_eval']}, reps={RL_SIRJPF['pf_reps']})")
-print(f"Initial panel logLik: {sirjpf_panel_ll0:.2f} "
-      f"(MCSE {sirjpf_panel_se0:.2f})")
+print(f"Initial panel logLik: {ll(sirjpf_panel_ll0)} "
+      f"(MCSE {sf(sirjpf_panel_se0)})")
 print("Per-unit logLik (log-mean-exp over replicates):")
 for u, v in zip(sirjpf_unit_names_full,
                 sirjpf_unit_ll0_all[0]):
-    print(f"  {u}: {v:8.2f}")
+    print(f"  {u}: {ll(v):>10s}")
 ```
 
-We refine the all-shared R tutorial starting vector with standard PIF. The two fixed process-noise terms remain shared and have random-walk standard deviation zero. The other 24 parameters are perturbed on the log scale with $\sigma_{\mathrm{rw}} = 0.05$. Good, medium, and poor starting vectors are evaluated with the same first-stage settings. The strongest distinct initial and terminal candidates then receive the same refinement and high-particle likelihood evaluation.
+We refine the all-shared R tutorial starting vector with standard PIF. The two fixed process-noise terms remain shared and have random-walk standard deviation zero. The other 24 parameters are perturbed on the log scale with $\sigma_{\mathrm{rw}} = 0.05$. Good, medium, poor, and extreme starting vectors are evaluated with the same first-stage settings. The strongest distinct initial and terminal candidates then receive the same refinement and high-particle likelihood evaluation.
 
 ```{python}
 #| label: sirjpf-mif
@@ -2792,16 +3071,13 @@ for name in sirjpf_selected_shared_df.index:
         sirjpf_selected_shared_df.loc[name, "shared"]
     )
 
-print(f"MIF + final pfilter wall: {TIMINGS['sirjpf_mif']:.1f}s")
+print(f"MIF + final pfilter wall: {sf(TIMINGS['sirjpf_mif'])}s")
 sirjpf_candidate_table = pd.DataFrame({
     "candidate": sirjpf_mif_out["candidate_source"],
     "panel_logLik": sirjpf_panel_ll_per_start,
     "MCSE": sirjpf_panel_se_per_start,
 })
-print(sirjpf_candidate_table.to_string(
-    index=False,
-    float_format=lambda x: f"{x:.4f}",
-))
+print(table_text(sirjpf_candidate_table))
 sirjpf_production_idx = sirjpf_mif_out["candidate_source"].index(
     "initial good 0"
 )
@@ -2813,11 +3089,11 @@ sirjpf_production_se = float(
 )
 print(
     f"Selected candidate: {sirjpf_mif_out['candidate_source'][sirjpf_best_idx]}, "
-    f"panel logLik = {sirjpf_best_ll:.2f} (MCSE {sirjpf_best_se:.2f})"
+    f"panel logLik = {ll(sirjpf_best_ll)} (MCSE {sf(sirjpf_best_se)})"
 )
 print(
     "Improvement vs R tutorial starting candidate: "
-    f"{sirjpf_best_ll - sirjpf_production_ll:+.2f}"
+    f"{ll(sirjpf_best_ll - sirjpf_production_ll, signed=True)}"
 )
 
 _, _, sirjpf_stage1_initial_ll, _ = summarize_panel_loglik(
@@ -2846,13 +3122,9 @@ sirjpf_quality_summary = (
     .reset_index()
 )
 print("\nMatched all-shared starts:")
-print(sirjpf_start_table.to_string(
-    index=False, float_format=lambda x: f"{x:.3f}",
-))
+print(table_text(sirjpf_start_table))
 print("\nSummary by starting-point quality:")
-print(sirjpf_quality_summary.to_string(
-    index=False, float_format=lambda x: f"{x:.3f}",
-))
+print(table_text(sirjpf_quality_summary))
 sirjpf_reference_ll = -880.5596
 sirjpf_reference_se = 0.232
 sirjpf_reference_gap_se = np.sqrt(
@@ -2888,64 +3160,73 @@ sirjpf_refinement_table = pd.DataFrame({
 })
 print(
     "Selected minus stored manuscript-reference logLik: "
-    f"{sirjpf_reference_difference:+.2f} "
-    f"(combined MCSE {sirjpf_reference_gap_se:.2f})"
+    f"{ll(sirjpf_reference_difference, signed=True)} "
+    f"(combined MCSE {sf(sirjpf_reference_gap_se)})"
 )
 print(
     "Refinement terminals within the stated MCSE-based tolerance of the "
     f"selected candidate: {sirjpf_refinement_agreement_count} of "
     f"{len(sirjpf_refinement_panel_ll)}"
 )
-print(sirjpf_refinement_table.to_string(
-    index=False, float_format=lambda x: f"{x:.4f}",
-))
+print(table_text(sirjpf_refinement_table))
 print(
     "\nAll-shared SIRJPF2 selected parameters:"
 )
 for k in ("rn", "ri", "f_Sn", "f_Si", "theta_Sn", "theta_Si",
          "theta_In", "theta_Ii", "k_Sn", "k_Si", "k_In", "k_Ii"):
-    print(f"  {k:>10s}: {sirjpf_selected_theta[k]:.6g}")
+    print(f"  {k:>10s}: {sf(sirjpf_selected_theta[k])}")
 ```
 
-The SIRJPF2 searches use standard PIF because the fitted specification contains only shared parameters. The good, medium, and poor starts use the same algorithmic settings. Terminal parameter estimates are evaluated by replicated particle filters, and the search with the largest estimated panel log likelihood is retained for subsequent inference.
+The SIRJPF2 searches use standard PIF because the fitted specification contains only shared parameters. The four start qualities use the same algorithmic settings, including the extreme group described in Section 1. Terminal parameter estimates are evaluated by replicated particle filters, and the search with the largest estimated panel log likelihood is retained for subsequent inference.
 
 ```{python}
 #| label: fig-sirjpf-start-quality-traces
 #| code-fold: true
-#| fig-width: 8
+#| fig-width: 10
 #| fig-height: 4
-#| fig-cap: "SIRJPF2 MIF traces from good, medium, and poor starting points under matched algorithmic settings."
+#| fig-cap: "SIRJPF2 MIF convergence by starting-point quality under matched algorithmic settings, drawn at the same two scales as the SRJF comparison in Section 1: the log likelihood itself, and the remaining distance to the best final median on a logarithmic axis. The same smoothing and gap-floor conventions apply."
 
-sirjpf_stage1_trace = sirjpf_mif_out["stage1_traces"]
-sirjpf_shared_trace = sirjpf_stage1_trace[
-    (sirjpf_stage1_trace["unit"] == "shared")
-    & (sirjpf_stage1_trace["method"] == "mif")
-].copy()
+sirjpf_quality_curves = mif_trace_curves(
+    sirjpf_mif_out["stage1_traces"], sirjpf_start_qualities
+)
+sirjpf_quality_groups = [
+    q for q in QUALITY_ORDER if q in set(sirjpf_start_qualities)
+]
+sirjpf_groups_present = [
+    q for q in sirjpf_quality_groups
+    if q in set(sirjpf_quality_curves["group"])
+]
+sirjpf_groups_absent = [q for q in sirjpf_quality_groups
+                        if q not in sirjpf_groups_present]
 
-fig, ax = plt.subplots(figsize=(8, 4))
-used_labels = set()
-for chain_id in sorted(sirjpf_shared_trace["theta_idx"].unique()):
-    quality = sirjpf_start_qualities[int(chain_id)]
-    sub = sirjpf_shared_trace[
-        sirjpf_shared_trace["theta_idx"] == chain_id
-    ]
-    sub = sub[np.isfinite(sub["logLik"])].sort_values("iteration")
-    ax.plot(
-        sub["iteration"], sub["logLik"],
-        color=quality_colors[quality], alpha=0.65, linewidth=0.9,
-        label=quality if quality not in used_labels else None,
-    )
-    used_labels.add(quality)
-ax.set_xlabel("Iteration", fontsize=FONTS["axis_label"])
-ax.set_ylabel("Log likelihood", fontsize=FONTS["axis_label"])
-ax.set_title("SIRJPF2 MIF traces by starting-point quality",
-             fontsize=FONTS["panel_title"])
-ax.tick_params(axis="both", labelsize=FONTS["tick"])
-ax.legend(title="Start", fontsize=FONTS["legend"], frameon=False)
-fig.tight_layout()
+fig, sirjpf_curve_best = plot_quality_curves(
+    sirjpf_quality_curves, sirjpf_groups_present, "SIRJPF2 MIF convergence",
+)
 ```
 
-The start table measures the improvement from each initial vector, and the trace figure shows when the likelihood increases. Persistent separation between start groups would indicate that additional search effort is needed before interpreting the selected estimate.
+```{python}
+#| label: sirjpf-convergence-speed
+#| code-fold: true
+
+sirjpf_quality_speed, sirjpf_speed_target = convergence_speed_table(
+    sirjpf_quality_curves, sirjpf_quality_groups
+)
+print(
+    "Convergence speed by starting-point quality. Target is the best final "
+    f"median less {sf(SPEED_TOLERANCE)} log units = {ll(sirjpf_speed_target)}:"
+)
+print(table_text(sirjpf_quality_speed))
+print(describe_arrivals(sirjpf_quality_speed))
+if sirjpf_groups_absent:
+    print(
+        "No finite MIF trace at any iteration for: "
+        + ", ".join(sirjpf_groups_absent)
+        + ". These starts are shown in the table above as NaN and are absent "
+        "from the figure because they have no plottable value."
+    )
+```
+
+The start table measures the improvement from each initial vector, the curves show when the likelihood increases, and the speed table states how many iterations each group needed to come within 10 log units of the best final median. Persistent separation between start groups would indicate that additional search effort is needed before interpreting the selected estimate.
 
 #### Fit diagnostic: per-unit log-likelihood breakdown
 
@@ -3084,56 +3365,29 @@ _, _, specific_mpif_stage1_ll, _ = summarize_panel_loglik(
 )
 
 
-def _mif_trace_summary(traces):
-    """Summarize matched chains by iteration for a convergence comparison."""
-    shared = traces[
-        (traces["unit"] == "shared") & (traces["method"] == "mif")
-    ].copy()
-    return (
-        shared.groupby("iteration")["logLik"]
-        .agg(
-            median="median",
-            lower=lambda x: x.quantile(0.25),
-            upper=lambda x: x.quantile(0.75),
-        )
-        .reset_index()
-        .sort_values("iteration")
-    )
-
-
-def _iteration_to_fraction(curve, fraction=0.9):
-    """First iteration reaching a fraction of the median trace gain."""
-    start = float(curve["median"].iloc[0])
-    finish = float(curve["median"].iloc[-1])
-    if not np.isfinite(start + finish) or finish <= start:
-        return np.nan
-    target = start + fraction * (finish - start)
-    reached = curve.loc[curve["median"] >= target, "iteration"]
-    return float(reached.iloc[0]) if len(reached) else np.nan
-
-
-pif_stage1_curve = _mif_trace_summary(sirjpf_pif_stage1["traces"])
-mpif_stage1_curve = _mif_trace_summary(sirjpf_mpif_stage1["traces"])
-sirjpf_speed_table = pd.DataFrame({
-    "method": ["PIF", "MPIF"],
-    "start_quality": ["medium", "medium"],
-    "initial_median_trace_logLik": [
-        pif_stage1_curve["median"].iloc[0],
-        mpif_stage1_curve["median"].iloc[0],
-    ],
-    "terminal_median_trace_logLik": [
-        pif_stage1_curve["median"].iloc[-1],
-        mpif_stage1_curve["median"].iloc[-1],
-    ],
-    "iteration_to_90pct_gain": [
-        _iteration_to_fraction(pif_stage1_curve),
-        _iteration_to_fraction(mpif_stage1_curve),
-    ],
-})
-print("Matched medium-start convergence summary:")
-print(sirjpf_speed_table.to_string(
-    index=False, float_format=lambda x: f"{x:.3f}",
-))
+# mif_trace_curves() drops iterations with no finite likelihood before it
+# takes quantiles. Iteration 0 has none, and summarising it made the first
+# median NaN, which propagated into the speed statistic below.
+pif_stage1_curve = mif_trace_curves(sirjpf_pif_stage1["traces"]).assign(
+    group="PIF"
+)
+mpif_stage1_curve = mif_trace_curves(sirjpf_mpif_stage1["traces"]).assign(
+    group="MPIF"
+)
+# One table, so both methods are timed against the same target. Timing each
+# method against its own gain would let the slower method look faster.
+sirjpf_method_speed, sirjpf_method_target = convergence_speed_table(
+    pd.concat([pif_stage1_curve, mpif_stage1_curve], ignore_index=True),
+    ["PIF", "MPIF"],
+)
+sirjpf_method_speed = sirjpf_method_speed.rename(columns={"group": "method"})
+sirjpf_method_speed.insert(1, "start_quality", "medium")
+print(
+    "Matched medium-start convergence summary. Target is the better final "
+    f"median less {sf(SPEED_TOLERANCE)} log units = "
+    f"{ll(sirjpf_method_target)}:"
+)
+print(table_text(sirjpf_method_speed))
 
 sirjpf_specific_pool_payloads = (
     sirjpf_pif_stage1["initial_theta"]
@@ -3238,11 +3492,11 @@ sirjpf_method_table = pd.DataFrame({
         + TIMINGS["sirjpf_specific_mpif_refine"],
     ],
 })
-print(sirjpf_method_table.to_string(index=False))
+print(table_text(sirjpf_method_table))
 print(
     "PIF best minus MPIF best logLik: "
-    f"{sirjpf_method_difference:+.4f} "
-    f"(combined MCSE {sirjpf_method_combined_se:.4f})"
+    f"{ll(sirjpf_method_difference, signed=True)} "
+    f"(combined MCSE {sf(sirjpf_method_combined_se)})"
 )
 ```
 
@@ -3257,12 +3511,14 @@ for curve, method, color in (
     (mpif_stage1_curve, "MPIF", PALETTE["infected"]),
 ):
     axes[0].plot(
-        curve["iteration"], curve["median"], label=method,
-        color=color, linewidth=1.5,
+        curve["iteration"], smooth_trace(curve["median"]), label=method,
+        color=color, linewidth=1.8,
     )
     axes[0].fill_between(
-        curve["iteration"], curve["lower"], curve["upper"],
-        color=color, alpha=0.16,
+        curve["iteration"],
+        smooth_trace(curve["lower"]),
+        smooth_trace(curve["upper"]),
+        color=color, alpha=0.16, linewidth=0,
     )
 axes[0].set_xlabel("Iteration", fontsize=FONTS["axis_label"])
 axes[0].set_ylabel("Trace log likelihood", fontsize=FONTS["axis_label"])
@@ -3304,7 +3560,7 @@ _emit_figure(
 )
 ```
 
-The iteration reaching 90% of each method's median trace gain is a descriptive convergence-speed measure. It does not establish that either method reached the global maximum. The final likelihood and MCSE comparison remains necessary because a fast trace can settle at a lower local maximum.
+The iterations-to-target column is a descriptive convergence-speed measure against a target shared by both methods. It does not establish that either method reached the global maximum. The final likelihood and MCSE comparison remains necessary because a fast trace can settle at a lower local maximum.
 
 ### Closing remarks for Section 2
 

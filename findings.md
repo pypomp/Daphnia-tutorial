@@ -80,3 +80,47 @@
 - A complete float32 versus float64 comparison cannot safely switch precision inside one Jupyter process. `render_gpu_precision_comparison.sh` therefore launches two independent complete level-2 renders, retains `_float32.html` and `_float64.html`, and leaves the standard `.html` as float64.
 - The ordinary level-2 wrapper now explicitly sets `DAPHNIA_DOUBLE_PRECISION=1` and `DAPHNIA_USE_CPU=0`, so a later standard render cannot inherit the diagnostic float32 setting.
 - The comparison wrapper continues to the float64 pass even if the diagnostic float32 pass fails. This protects the standard output while honestly recording that a complete float32 comparison was unavailable.
+
+## 2026-09-02 comment export
+
+- The completed level-2 float64 render was blocked by a stale release-validator
+  sentinel, not by a numerical problem. `render_gpu.sh` packages, gates, and
+  only then renames the standalone over the published file, so a failed gate
+  leaves the new render orphaned and restores the old document. That is exactly
+  the state the repository was in.
+- The PIF/MPIF convergence-speed statistic printed NaN in that render because
+  `_mif_trace_summary` summarised iteration 0, which records the starting
+  parameters before any likelihood has been evaluated. The replacement,
+  `mif_trace_curves`, drops iterations with no finite value.
+- Four significant digits cannot be applied uniformly. A panel log likelihood of
+  -498.954178 becomes -499.0, which cannot express the -0.17 difference from the
+  stored reference that the document reports against a combined MCSE of 0.46.
+  Log likelihoods therefore use two decimal places and everything else uses four
+  significant digits; the split is dispatched per column name in `table_text`.
+- A start-quality comparison in which every group converges shows only that the
+  search is robust to the displacements tried. The `extreme` group exists to
+  locate the failure boundary. Its jitter standard deviation of 2.5 is a
+  judgement call and may land either side of the target, so the reporting was
+  made robust to a group that produces no finite likelihood at all.
+- Normalising a convergence-speed statistic by each group's own gain cannot
+  compare groups. A group starting near the maximum has almost no gain to make,
+  so it reaches 90% of it immediately or, when its median does not rise, never;
+  a group with a large gain reaches most of it early while still finishing far
+  below the others. The measure now times every group against one shared
+  target: the best final median observed, less 10 log units.
+- The extreme start displacement is bounded by the measurement model, not by
+  taste. A fixed -150 penalty per violating observation floors the SRJF panel
+  likelihood at -15,000, and a start displaced far enough to violate every
+  bound sits on a flat surface with no gradient. That demonstrates the soft
+  constraint rather than the optimiser, so the jitter is 1.8 rather than 2.5.
+- Prose must not predict a result the render has not produced. The document
+  cannot execute without the A100, so any sentence asserting that the extreme
+  starts fail would be a prediction printed as a finding. The previous run's
+  best of nine starts was a poor one, so displaced starts recovering is not
+  unlikely here. `describe_arrivals` generates the sentence from the table.
+- Comparing convergence speed across groups that begin hundreds of log units
+  apart needs a logarithmic gap axis, not a zoomed linear one. On a linear
+  zoom the group that starts nearest the maximum is flat against the top
+  whatever window is chosen; on a log axis of the remaining distance to the
+  best final median, a constant rate of approach is a straight line and the
+  slopes are directly comparable.

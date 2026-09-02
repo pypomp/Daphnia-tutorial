@@ -176,6 +176,32 @@ fails — the allocation is already paid for — and the closing summary lists e
 document as `published`, `unchanged, previous kept` (the run failed and the
 previous document was restored) or `NOT PUBLISHED`.
 
+### Comparing float32 with float64
+
+`render_gpu_precision_comparison.sh` renders the advanced tutorial twice. JAX
+fixes its precision when it initialises, so a complete comparison needs two
+processes rather than a switch inside one document.
+
+```bash
+DAPHNIA_DOC=daphnia_tut_pypomp_advanced ./render_gpu_precision_comparison.sh
+```
+
+float64 runs first and is the render that gets published; float32 follows as a
+diagnostic and is never left in place as the standard document.
+
+| File | Precision | What it is |
+|---|---|---|
+| `daphnia_tut_pypomp_advanced_float64.html` | float64 | the float64 render |
+| `daphnia_tut_pypomp_advanced_float32.html` | float32 | diagnostic only; expect impossible positive log-likelihoods |
+| `daphnia_tut_pypomp_advanced.html` | float64 | the published document, always a copy of the float64 render |
+
+Both passes force recomputation, and `DAPHNIA_RUN_LEVEL` selects the budget
+(default 2). If the float64 pass fails, nothing is published, the previous
+document is restored, and float32 is not attempted. If only the float32 pass
+fails, the float64 document stands and the script exits with the diagnostic's
+status, so a non-zero exit accompanied by a `Float64 (published)` line means
+just the diagnostic was lost.
+
 ### Running interactively on a chosen GPU
 
 None of the scripts sets `CUDA_VISIBLE_DEVICES`, so whatever you export is

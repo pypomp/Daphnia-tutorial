@@ -4,7 +4,9 @@
 Apply every actionable review comment to the advanced QMD, make run level 2 the default GPU-only workflow, keep optional CPU material fully inactive and invisible when `use_CPU=False`, and produce a comprehensive HTML completion checklist.
 
 ## Current Phase
-Phase 7 review implementation complete. Numerical execution is pending on the ResearchGrid A100.
+Phase 8 complete: the 2026-09-02 comment export is implemented and the release
+validator no longer blocks publication. A float32/float64 level-2 GPU render is
+pending.
 
 ## Phases
 
@@ -86,3 +88,19 @@ Phase 7 review implementation complete. Numerical execution is pending on the Re
 |---|---:|---|
 | Setup test could not find the QMD from repository root | 1 | Re-ran from `Python-code`, matching the Quarto and ResearchGrid wrapper working directory; setup passed. |
 | Planning-file update patch expected a missing section | 1 | Inspected the files and applied a narrower patch matching their actual structure. |
+
+### Phase 8: Apply the 2026-09-02 comment export
+- [x] Add a fourth `extreme` start quality and rebalance run-level start counts.
+- [x] Redraw the scaling comparison as connected markers on a shared axis.
+- [x] Replace per-chain MIF traces with smoothed group curves and add a
+      convergence-speed table in both sections.
+- [x] Repair the NaN convergence-speed statistic.
+- [x] Apply four-significant-digit formatting throughout, with log likelihoods
+      at two decimal places.
+- [x] Replace the stale release-validator sentinel that blocked publication.
+- [x] Confirm the author accepts the log-likelihood formatting exception.
+      Confirmed 2026-09-02: log likelihoods stay at two decimal places.
+- [x] Make the precision comparison render float64 first, so the published
+      document is never the float32 diagnostic.
+- [ ] Run the float64 and float32 level-2 renders on the allocated GPU.
+- **Status:** implementation complete; render pending.

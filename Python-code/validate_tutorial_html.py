@@ -15,8 +15,15 @@ VOID_TAGS = {
     "link", "meta", "param", "source", "track", "wbr",
 }
 RESOURCE_ATTR = {"img": "src", "script": "src", "link": "href"}
+# Sentinels that must survive packaging. "not itself peer-reviewed" lived in
+# the advanced tutorial's Status section, which the 2026-08-24 review had
+# deleted; the string therefore failed every render of the revised document
+# and blocked publication of a run that was otherwise complete. It is
+# replaced by the precision banner, which every render prints and which is
+# the claim most worth guarding: a document whose stated precision is missing
+# should not be published.
 REQUIRED_TEXT = (
-    "not itself peer-reviewed",
+    "Complete tutorial precision:",
     "Diagnostic 4: Monte Carlo Adjusted Profile",
     "SIRJPF2 specification used here contains only shared parameters",
 )
