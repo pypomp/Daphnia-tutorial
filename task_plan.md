@@ -104,3 +104,20 @@ pending.
       document is never the float32 diagnostic.
 - [ ] Run the float64 and float32 level-2 renders on the allocated GPU.
 - **Status:** implementation complete; render pending.
+
+### Phase 9: Apply the 2026-09-03 checklist
+- [x] Remove the interquartile band from the left panel of Figures 4 and 8 and
+      put the log likelihood on a transformed logarithmic axis.
+- [x] Make the right panel measure against the highest log likelihood any start
+      reached, and draw the best chain in each group.
+- [x] Reduce the start qualities to medium, poor and extreme, with poor and
+      extreme displaced further, and rebalance the run-level start counts.
+- [x] Choose the three jitter values by measurement rather than by eye.
+- [x] Widen the theta_Jn profile window to log -10 to 0.
+- [x] Update Pypomp to 1.0.0 at 232180a and adapt both tutorials to its API.
+- [x] Verify locally: static checks on both QMDs and a complete run-level-1
+      CPU execution of the advanced document.
+- [x] Record the whole checklist in
+      `Python-code/daphnia_tut_pypomp_advanced_update_20260903.html`.
+- [ ] Run the float64 and float32 level-2 renders on the allocated GPU.
+- **Status:** implementation complete; render pending.

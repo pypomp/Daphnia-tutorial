@@ -131,7 +131,7 @@ def run_searches(theta_payloads, rw, J, M, Np_, reps, key0):
     ll, se, thetas, traces = [], [], [], []
     for i in range(0, len(theta_payloads), SEARCH_BATCH):
         part = theta_payloads[i:i + SEARCH_BATCH]
-        panel = pp.PanelPomp(Pomp_dict=srjf_pomp_dict,
+        panel = pp.PanelPomp(pomp_dict=srjf_pomp_dict,
                              theta=pp.PanelParameters(part))
         panel.mif(J=J, M=M, rw_sd=rw, block=False, key=jax.random.key(key0 + i))
         panel.pfilter(J=Np_, reps=reps, key=jax.random.key(key0 + i + 1))
@@ -413,7 +413,9 @@ def srjf_rmeas(X_, theta_, key, covars, t):
     scale = mu / size
     gamma_sample = jax.random.gamma(k1, size) * scale
     obs = jax.random.poisson(k2, gamma_sample)
-    return jnp.array([obs], dtype=float)
+    # Pypomp 1.0.0 requires rmeas to return a mapping keyed by the observation
+    # names of `ys`, rather than the positionally ordered array 0.4.x took.
+    return {"dentadult": obs.astype(float)}
 ```
 
 ```{python}
@@ -507,7 +509,7 @@ def shared_theta(d):
     }
 
 
-panelfood = pp.PanelPomp(Pomp_dict=srjf_pomp_dict,
+panelfood = pp.PanelPomp(pomp_dict=srjf_pomp_dict,
                          theta=pp.PanelParameters(shared_theta(shared_parameter)))
 print("Shared parameters:", panelfood.canonical_shared_param_names)
 ```
@@ -528,7 +530,7 @@ shared_parameter_wrong = {
     "k_Sn":     1.417860e-01,
 }
 panelfood_wrong = pp.PanelPomp(
-    Pomp_dict=srjf_pomp_dict,
+    pomp_dict=srjf_pomp_dict,
     theta=pp.PanelParameters(shared_theta(shared_parameter_wrong)),
 )
 print("Mis-scaled panel constructed")
@@ -638,7 +640,7 @@ def uspec_theta(shared_d, spec_df):
 # STARTING values, so it must not be reassigned to a fitted panel afterwards.
 # One parameter set throughout.
 panelfood = pp.PanelPomp(
-    Pomp_dict=srjf_pomp_dict,
+    pomp_dict=srjf_pomp_dict,
     theta=pp.PanelParameters(uspec_theta(shared_parameter_uspec, specific_mat)),
 )
 
@@ -652,7 +654,7 @@ uspec_payloads = [uspec_theta(shared_parameter_uspec, specific_mat)] * n_searche
 ll_uspec, se_uspec, theta_uspec, traces_uspec = [], [], [], []
 for i in range(0, n_searches, SEARCH_BATCH):
     part = uspec_payloads[i:i + SEARCH_BATCH]
-    pnl = pp.PanelPomp(Pomp_dict=srjf_pomp_dict, theta=pp.PanelParameters(part))
+    pnl = pp.PanelPomp(pomp_dict=srjf_pomp_dict, theta=pp.PanelParameters(part))
     pnl.mif(J=Mp, M=Nmif, rw_sd=uspec_rw_sd, block=True,
             key=jax.random.key(303 + i))
     pnl.pfilter(J=Np, reps=Np_rep, key=jax.random.key(404 + i))
@@ -878,7 +880,7 @@ def run_profile(prof_name, nprof, base, seed):
     for i in range(0, len(design), PROFILE_BATCH):
         rows = design.iloc[i:i + PROFILE_BATCH]
         panel = pp.PanelPomp(
-            Pomp_dict=srjf_pomp_dict,
+            pomp_dict=srjf_pomp_dict,
             theta=pp.PanelParameters(
                 [shared_theta(r) for r in rows.to_dict("records")]),
         )
@@ -1304,9 +1306,13 @@ def sirjpf_rmeas(X_, theta_, key, covars, t):
     y_dent_inf   = _sirjpf_nb_sample(keys[1], X_["T_In"], theta_["k_In"])
     y_lum_adult  = _sirjpf_nb_sample(keys[2], X_["T_Si"], theta_["k_Si"])
     y_lum_inf    = _sirjpf_nb_sample(keys[3], X_["T_Ii"], theta_["k_Ii"])
-    return jnp.array(
-        [y_dent_adult, y_dent_inf, y_lum_adult, y_lum_inf], dtype=float,
-    )
+    # Keyed by observation name, as Pypomp 1.0.0 requires; see `srjf_rmeas`.
+    return {
+        "dentadult": y_dent_adult.astype(float),
+        "dentinf":   y_dent_inf.astype(float),
+        "lumadult":  y_lum_adult.astype(float),
+        "luminf":    y_lum_inf.astype(float),
+    }
 ```
 
 ```{python}
@@ -1412,7 +1418,7 @@ sirjpf_unit_specific_df = pd.DataFrame(
     index=[], columns=sirjpf_unit_names_full,
 )
 panelfood_sirjpf = pp.PanelPomp(
-    Pomp_dict=sirjpf_pomp_dict,
+    pomp_dict=sirjpf_pomp_dict,
     theta=pp.PanelParameters(
         {"shared": sirjpf_shared_df,
          "unit_specific": sirjpf_unit_specific_df}
@@ -1448,7 +1454,7 @@ sirjpf_rw_sd = pp.RWSigma(sigmas=sirjpf_rw_sigmas,
                           init_names=[]).geometric_cooling(0.7)
 
 panelfood_sirjpf = pp.PanelPomp(
-    Pomp_dict=sirjpf_pomp_dict,
+    pomp_dict=sirjpf_pomp_dict,
     theta=pp.PanelParameters(
         [{"shared": sirjpf_shared_df.copy(deep=True),
           "unit_specific": sirjpf_unit_specific_df.copy(deep=True)}]

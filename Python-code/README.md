@@ -44,9 +44,12 @@ dependencies, and gates on them), `smoke_test.py` (pre-flight check) and
 
 ### Prerequisites
 
-Both tutorials were produced with Pypomp 0.4.6.0 at commit
-`ed95e3bd46c1cc188fc8f7d83e89c6d5035b977c`, and the released PyPI package is not
-a substitute.
+Both tutorials target Pypomp 1.0.0 at commit
+`232180acfafeefc7420755a9896827e3d3d0cf35`, and the released PyPI package is not
+a substitute. Pypomp 1.0.0 needs Python 3.11 or newer. The rendered documents
+currently in this directory predate the pin change: they were produced with
+0.4.6.0 at `ed95e3bd46c1cc188fc8f7d83e89c6d5035b977c`, and the next render
+replaces them.
 
 Only `daphnia_tut_pypomp_advanced.qmd` *enforces* this. It reads the git HEAD of
 whatever `import pypomp` resolves to and stops with a `RuntimeError` if it is not
@@ -55,14 +58,19 @@ you give it and quietly produce numbers from that version instead. Check the
 revision yourself before trusting a render of it:
 
 ```bash
-git -C ~/git/pypomp rev-parse HEAD    # want ed95e3bd46c1cc188fc8f7d83e89c6d5035b977c
+git -C ~/git/pypomp rev-parse HEAD    # want 232180acfafeefc7420755a9896827e3d3d0cf35
 python -c "import pypomp; print(pypomp.__file__, pypomp.__version__)"
 ```
+
+The commit is the reliable half of that. `pypomp.__version__` reads the
+installed distribution metadata, so an editable install whose metadata was not
+refreshed — which is what happens when `pip install -e` is refused, for example
+on Python 3.10 — reports the old version while importing the new source.
 
 ```bash
 git clone https://github.com/pypomp/pypomp.git ~/git/pypomp
 cd ~/git/pypomp
-git checkout ed95e3bd46c1cc1
+git checkout 232180acfafee
 cd ~/git/Daphnia-tutorial/Python-code
 pip install -e ~/git/pypomp
 ```
@@ -246,6 +254,15 @@ It confirms that the code runs; it says nothing about whether the numbers are
 right. When testing a change to the search code, raise `DAPHNIA_N_WORKERS`
 enough to cross the 50-start batching boundary — a single batch hides an entire
 class of indexing bug.
+
+To make the advanced document runnable on a laptop at all, `smoke_test.py`
+relaxes two of its render-time gates: the requirement of a CUDA GPU backend,
+and the comparison of the imported Pypomp build against the pinned commit. It
+prints how many gates it relaxed and which Pypomp it resolved, so a run against
+the wrong build is visible in the banner rather than silent, and it prints the
+document's own recorded commit and backend when the run finishes. Nothing else
+relaxes them — `render_gpu.sh` and `validate_tutorial_html.py` still enforce
+both for anything that gets published.
 
 ### Checking a rendered document
 

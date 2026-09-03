@@ -124,3 +124,53 @@
   whatever window is chosen; on a log axis of the remaining distance to the
   best final median, a constant rate of approach is a straight line and the
   slopes are directly comparable.
+
+## 2026-09-03 figure rework and Pypomp 1.0.0
+
+- The interquartile band was the problem, not the scale. In the completed
+  level-2 render the extreme group's band spanned from -500 to below -5,000 on
+  the SIRJPF2 panel, so the four median curves it was meant to contextualise
+  were drawn as one line along the top border. Removing the band is not enough
+  on its own, because the medians themselves span two orders of magnitude; the
+  axis has to be transformed as well.
+- A log likelihood cannot be log-transformed directly, since it is negative.
+  The map `y -> -log10(-y)` is increasing over y < 0, so it compresses the
+  magnitude while keeping better likelihoods higher on the axis, and ticks can
+  still be labelled in log-likelihood units. Matplotlib expresses this as
+  `set_yscale("function", functions=(forward, inverse))`.
+- The median is the wrong summary for the convergence-speed panel. It answers
+  what a typical chain from a given start quality did, whereas a reader picking
+  starting values wants to know what the best one achieved. The right panel now
+  draws one chain per group, the chain whose smoothed trace ends highest, and
+  measures it against the highest smoothed value reached by any chain from any
+  start. Smoothing is what makes "highest" meaningful: a single iteration of a
+  perturbed particle filter is noisy enough to promote a chain on luck alone.
+- The four start qualities were too close together to separate. In the level-2
+  float64 render every group reached the target within seven of 320 iterations
+  and the extreme group's first evaluated likelihood, -551, was better than the
+  poor group's -598. Three groups at 0.45, 1.6 and 3.0 give median initial
+  panel log likelihoods of about -568, -1,865 and -10,400.
+- The extreme starts are not on a flat penalty floor. The fixed -150 per
+  violating observation implies a floor near -15,000 for this panel, but
+  measured starts at jitter 3.0 reach -315,759, so the binding term is the
+  negative-binomial density itself on a badly misfitting trajectory. The
+  surface is steep there, and the earlier argument for bounding the extreme
+  displacement at 1.8 does not hold.
+- The theta_Jn profile could not close its interval because the grid was too
+  narrow, not because the profile is flat. The decade-either-side rule put the
+  grid at log -10.06 to -5.46 and the smoothed maximum landed on the lower
+  edge. An explicit window of -10 to 0 leaves the same lower edge and extends
+  the upper end by five and a half log units; an interval that still reaches an
+  endpoint is then evidence about the profile rather than about the grid.
+- Pypomp 1.0.0 (232180a) breaks two things the tutorials rely on, and only two.
+  `PanelPomp` renamed its `Pomp_dict` argument to `pomp_dict`, and `rmeas` must
+  now return a dict keyed by observation name rather than an array whose order
+  has to match the columns of `ys`. Everything else the tutorials use --
+  `Pomp`, `PompParameters`, `PanelParameters`, `RWSigma`, `ParTrans`, `mcap`,
+  `mif`, `pfilter`, `traces()`, `results_history[-1].logLiks` -- accepted the
+  existing calls unchanged, because they were already written with keyword
+  arguments and 1.0.0's tightening was to make estimation arguments
+  keyword-only.
+- `mcap` in 1.0.0 no longer depends on the `loess` package; it smooths with its
+  own `_loess_smooth_1d`. Profile intervals may therefore differ slightly from
+  the 0.4.6.0 render even on identical inputs.

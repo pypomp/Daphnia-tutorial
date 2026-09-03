@@ -85,6 +85,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 
 import jax
 import jax.numpy as jnp
@@ -103,7 +104,7 @@ if bool(jax.config.jax_enable_x64) != double_precision:
 RUN_LEVELS = {
     1: {
         "J": 50, "J_eval": 50, "Nmif": 2,
-        "n_starts": 4, "pf_reps": 2,
+        "n_starts": 3, "pf_reps": 2,
     },  # rapid prototype
     2: {
         "J": 500, "J_eval": 600, "Nmif": 320,
@@ -111,7 +112,7 @@ RUN_LEVELS = {
     },  # tutorial analysis
     3: {
         "J": 1000, "J_eval": 1000, "Nmif": 250,
-        "n_starts": 20, "pf_reps": 20,
+        "n_starts": 21, "pf_reps": 20,
     },  # production analysis
 }
 RL_SRJF = RUN_LEVELS[run_level]
@@ -205,6 +206,26 @@ def mif_trace_curves(traces, groups=None):
     )
 
 
+def mif_chain_traces(traces, groups):
+    """Per-chain shared-parameter MIF traces, labelled by quality group.
+
+    `mif_trace_curves` collapses the chains within a group to a median. The
+    right-hand panel of the convergence figures needs the chains themselves,
+    because it reports what the best start in each group achieved rather than
+    what a typical one did.
+    """
+    shared = traces[
+        (traces["unit"] == "shared") & (traces["method"] == "mif")
+    ].copy()
+    shared = shared[np.isfinite(shared["logLik"])].copy()
+    shared["group"] = [groups[int(i)] for i in shared["theta_idx"]]
+    return (
+        shared[["group", "theta_idx", "iteration", "logLik"]]
+        .sort_values(["group", "theta_idx", "iteration"])
+        .reset_index(drop=True)
+    )
+
+
 def smooth_trace(values, frac=0.15):
     """Centred rolling mean, wide enough to read as one curve per group."""
     series = pd.Series(np.asarray(values, dtype=float))
@@ -218,68 +239,166 @@ SPEED_TOLERANCE = 10.0  # log units from the best outcome, for the speed target
 GAP_FLOOR = 0.05  # smallest gap drawn on the logarithmic panel
 
 
-def plot_quality_curves(curves, groups, title, floor=GAP_FLOOR):
+def _round_magnitude_ticks(hi, lo, target=4):
+    """Round tick values covering magnitudes [hi, lo], as negative numbers.
+
+    A 1-2-5 ladder reads better than evenly spaced powers, but over a narrow
+    range it yields too few ticks, so a finer ladder is tried before falling
+    back to even geometric spacing. Both ends of the data range are always
+    labelled: on a compressed axis the best and worst values a group reached
+    are exactly the two numbers a reader wants to read off, and a ladder tick
+    can otherwise sit far inside either end.
+    """
+    ends = [float(f"{hi:.2g}"), float(f"{lo:.2g}")]
+    chosen = None
+    for ladder in ((1, 2, 5), (1, 1.5, 2, 3, 5, 7)):
+        decades = range(int(np.floor(np.log10(hi))),
+                        int(np.ceil(np.log10(lo))) + 1)
+        candidates = [
+            m * 10.0 ** d for d in decades for m in ladder
+            if hi <= m * 10.0 ** d <= lo
+        ]
+        if len(candidates) >= target:
+            chosen = candidates
+            break
+    if chosen is None:
+        chosen = list(np.geomspace(hi, lo, 6))
+        chosen = [float(f"{m:.2g}") for m in chosen]
+    # Drop ladder ticks that would crowd an endpoint label.
+    keep = [c for c in chosen
+            if all(abs(np.log10(c) - np.log10(e)) > 0.03 for e in ends)]
+    return sorted({-c for c in keep + ends})
+
+
+def _neg_log_yscale(ax, values):
+    """Put a logarithmic axis on a quantity that is negative and unbounded below.
+
+    A log likelihood is negative, so its logarithm does not exist; what needs
+    compressing is its magnitude. The map $y \\mapsto -\\log_{10}(-y)$ is
+    increasing over $y < 0$, so a better likelihood still sits higher on the
+    axis, while a group tens of thousands of units below no longer flattens
+    the groups that converge into one line. Ticks are placed at round
+    magnitudes and labelled as log likelihoods, so the reader never has to
+    undo the transformation. Over a range narrower than one decade the
+    transformation is nearly linear and the default ticks are left alone.
+    """
+    finite = np.asarray([v for v in np.ravel(values) if np.isfinite(v)],
+                        dtype=float)
+    finite = finite[finite < 0.0]
+    if finite.size == 0:
+        return
+    tiny = 1e-12
+
+    def forward(y):
+        y = np.asarray(y, dtype=float)
+        return -np.log10(np.maximum(-y, tiny))
+
+    def inverse(t):
+        t = np.asarray(t, dtype=float)
+        return -np.power(10.0, -t)
+
+    ax.set_yscale("function", functions=(forward, inverse))
+    hi, lo = -finite.max(), -finite.min()   # magnitudes: nearest and furthest
+    if lo <= hi * (1.0 + 1e-9):
+        return                              # one decade or less; keep autoticks
+    ticks = _round_magnitude_ticks(hi, lo)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels([f"{t:,.0f}" if abs(t) >= 10 else f"{t:.3g}"
+                        for t in ticks])
+    ax.yaxis.set_minor_locator(mticker.NullLocator())
+
+
+def best_chain_curves(chains, groups, frac=0.15):
+    """The best chain in each group, and the best log likelihood anywhere.
+
+    "Best" is measured on the smoothed trace, so that one lucky iteration of a
+    perturbed particle filter cannot promote a chain: a group's representative
+    is the chain whose smoothed trace ends highest, and the reference is the
+    highest smoothed value reached by any chain from any start.
+
+    Returns a mapping from group to (iterations, smoothed trace) and that
+    reference. A group with no finite trace is absent from the mapping.
+    """
+    per_group, reference = {}, -np.inf
+    for group in groups:
+        block = chains[chains["group"] == group]
+        best_end, best_curve = -np.inf, None
+        for _, chain in block.groupby("theta_idx", sort=True):
+            iterations = chain["iteration"].to_numpy(dtype=float)
+            smoothed = smooth_trace(chain["logLik"], frac=frac).to_numpy(
+                dtype=float
+            )
+            if not smoothed.size or not np.any(np.isfinite(smoothed)):
+                continue
+            reference = max(reference, float(np.nanmax(smoothed)))
+            if float(smoothed[-1]) > best_end:
+                best_end, best_curve = float(smoothed[-1]), (iterations,
+                                                             smoothed)
+        if best_curve is not None:
+            per_group[group] = best_curve
+    return per_group, (reference if np.isfinite(reference) else np.nan)
+
+
+def plot_quality_curves(curves, chains, groups, title, floor=GAP_FLOOR):
     """Draw grouped convergence curves at two complementary scales.
 
-    On a single log-likelihood axis, a group that never recovers sits far
-    enough below the rest to squash them into one indistinguishable line, so
-    two panels are drawn.
+    The left panel is the log likelihood itself, one smoothed median curve per
+    group, on the logarithmic axis described in `_neg_log_yscale`. A group that
+    does not recover sits tens of thousands of log units below the rest; on a
+    linear axis it compresses every other curve onto the top border, which is
+    what an interquartile band around it did as well. The band is therefore
+    gone and the axis is transformed instead.
 
-    The left panel is the log likelihood itself. It carries the absolute
-    values and is where a group on a separate track is visible at all.
-
-    The right panel is the remaining distance to the best final median, on a
-    logarithmic axis. Restricting the left panel's range instead would still
-    leave groups that begin hundreds of log units apart sharing one linear
-    scale, with the best group flat against the top. On the log-gap axis a
-    constant rate of approach is a straight line whatever the starting
-    distance, so the slopes are directly comparable and they are the speeds
-    this comparison is about. Gaps at or below `floor` are drawn at `floor`,
-    since zero has no place on a logarithmic axis.
+    The right panel is the remaining distance to the best log likelihood any
+    start reached, on a logarithmic axis, for the best chain in each group. A
+    constant rate of approach is a straight line there whatever the starting
+    distance, so the slopes are directly comparable and they are the
+    convergence speeds this comparison is about. Taking each group's best chain
+    rather than its median answers what that start quality can achieve, which
+    is the question a reader choosing starting values is asking. Gaps at or
+    below `floor` are drawn at `floor`, since zero has no place on a
+    logarithmic axis.
     """
-    finals = {
-        g: float(curves[curves["group"] == g]["median"].iloc[-1])
-        for g in groups if len(curves[curves["group"] == g])
-    }
-    best_final = max(finals.values()) if finals else np.nan
+    best_chains, reference = best_chain_curves(chains, groups)
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True)
+    left_values = []
     for group in groups:
         curve = curves[curves["group"] == group]
-        if not len(curve):
-            continue
-        colour = QUALITY_COLORS[group]
-        smoothed = smooth_trace(curve["median"])
-        axes[0].plot(curve["iteration"], smoothed,
-                     color=colour, linewidth=1.8, label=group)
-        axes[0].fill_between(
-            curve["iteration"],
-            smooth_trace(curve["lower"]),
-            smooth_trace(curve["upper"]),
-            color=colour, alpha=0.15, linewidth=0,
-        )
-        if np.isfinite(best_final):
-            gap = np.maximum(best_final - smoothed.to_numpy(dtype=float), floor)
-            axes[1].plot(curve["iteration"], gap,
+        if len(curve):
+            colour = QUALITY_COLORS[group]
+            smoothed = smooth_trace(curve["median"]).to_numpy(dtype=float)
+            left_values.append(smoothed)
+            axes[0].plot(curve["iteration"], smoothed,
                          color=colour, linewidth=1.8, label=group)
+        if group in best_chains and np.isfinite(reference):
+            iterations, chain_curve = best_chains[group]
+            gap = np.maximum(reference - chain_curve, floor)
+            axes[1].plot(iterations, gap, color=QUALITY_COLORS[group],
+                         linewidth=1.8, label=group)
 
     for ax in axes:
         ax.set_xlabel("Iteration", fontsize=FONTS["axis_label"])
         ax.tick_params(axis="both", labelsize=FONTS["tick"])
 
-    axes[0].set_ylabel("Log likelihood", fontsize=FONTS["axis_label"])
-    axes[0].set_title(f"{title}: log likelihood", fontsize=FONTS["panel_title"])
-    axes[0].legend(title="Start", fontsize=FONTS["legend"], frameon=False)
+    _neg_log_yscale(axes[0], np.concatenate(left_values) if left_values
+                    else np.array([]))
+    axes[0].set_ylabel("Log likelihood (log scale)",
+                       fontsize=FONTS["axis_label"])
+    axes[0].set_title(f"{title}: median by group",
+                      fontsize=FONTS["panel_title"])
+    if axes[0].get_legend_handles_labels()[0]:
+        axes[0].legend(title="Start", fontsize=FONTS["legend"], frameon=False)
 
     axes[1].set_yscale("log")
-    axes[1].set_ylabel("Distance to best final median",
+    axes[1].set_ylabel("Distance to best start, best chain in group",
                        fontsize=FONTS["axis_label"])
     axes[1].set_title(
-        f"Remaining gap to {ll(best_final)}, log scale",
+        f"Remaining gap to {ll(reference)}, log scale",
         fontsize=FONTS["panel_title"],
     )
     fig.tight_layout()
-    return fig, best_final
+    return fig, reference
 
 
 def describe_arrivals(speed_table, tolerance=SPEED_TOLERANCE):
@@ -370,7 +489,7 @@ def convergence_speed_table(curves, groups, tolerance=SPEED_TOLERANCE):
     return pd.DataFrame(rows), target
 
 
-QUALITY_ORDER = ("good", "medium", "poor", "extreme")
+QUALITY_ORDER = ("medium", "poor", "extreme")
 
 
 def summarize_panel_loglik(logliks):
@@ -394,24 +513,23 @@ def make_quality_panel_starts(
     """Create reproducible starts of graded quality, all strictly positive."""
     rng = np.random.default_rng(seed)
     qualities = list(qualities or QUALITY_ORDER)
-    # The extreme displacement is deliberately bounded. The measurement model
-    # returns a fixed -150 for a violating observation, so a start displaced
-    # far enough to violate every bound sits on a flat penalty surface where
-    # MIF has no gradient at all. That would demonstrate the constraint
-    # device rather than the optimiser. 1.8 is roughly twice the poor
-    # displacement while normally remaining evaluable.
-    jitter_by_quality = {
-        "good": 0.08, "medium": 0.45, "poor": 1.0, "extreme": 1.8,
-    }
+    # The three displacements are separated on the likelihood surface, not
+    # merely on the parameter scale, and the separation was measured rather
+    # than assumed. Twelve starts per value, evaluated by pfilter at J=600
+    # with four replicates before any MIF, gave these median panel log
+    # likelihoods: 0.45 -> -568, 1.6 -> -1865, 3.0 -> -10380. Roughly half a
+    # decade of magnitude separates each group from the next, which is what
+    # the logarithmic axis of the convergence figures resolves. `extreme` is
+    # deliberately far enough that this compute budget need not recover it: a
+    # comparison in which every group converges shows only that the search is
+    # robust to the displacements tried.
+    jitter_by_quality = {"medium": 0.45, "poor": 1.6, "extreme": 3.0}
     starts = []
     fixed = set(fixed)
-    for i, quality in enumerate(qualities):
+    for quality in qualities:
         if quality not in jitter_by_quality:
             raise ValueError(f"Unknown start quality: {quality}")
-        jitter_sd = (
-            0.0 if i == 0 and quality == "good"
-            else jitter_by_quality[quality]
-        )
+        jitter_sd = jitter_by_quality[quality]
         shared_i = shared_df.copy(deep=True)
         unit_i = (
             None
@@ -440,10 +558,10 @@ def make_quality_panel_starts(
 
 
 def start_quality_schedule(n_starts):
-    """Return balanced good, medium, poor, and extreme starts.
+    """Return balanced medium, poor, and extreme starts.
 
     The extreme group exists to show a start that the tutorial's compute
-    budget does not recover from, rather than four groups that all converge.
+    budget need not recover from, rather than three groups that all converge.
     """
     if n_starts < len(QUALITY_ORDER):
         raise ValueError(
@@ -483,9 +601,9 @@ def _git_commit(path):
 # the model contract, numerical precision, or the run-level configuration
 # changes. Payloads from older cache schemas are deliberately ignored.
 MODEL_CONTRACT_VERSION = "daphnia-production-2026-07-16"
-CACHE_SCHEMA_VERSION = "daphnia-qmd-cache-v6"
-EXPECTED_PYPOMP_VERSION = "0.4.6.0"
-EXPECTED_PYPOMP_COMMIT = "ed95e3bd46c1cc188fc8f7d83e89c6d5035b977c"
+CACHE_SCHEMA_VERSION = "daphnia-qmd-cache-v7"
+EXPECTED_PYPOMP_VERSION = "1.0.0"
+EXPECTED_PYPOMP_COMMIT = "232180acfafeefc7420755a9896827e3d3d0cf35"
 QMD_PATH = _find_existing_path(
     "daphnia_tut_pypomp_advanced.qmd",
 )
@@ -605,8 +723,7 @@ FONTS = {
 
 # One colour per starting-point quality, shared by both model sections.
 QUALITY_COLORS = {
-    "good":    PALETTE["adult"],
-    "medium":  PALETTE["juvenile"],
+    "medium":  PALETTE["adult"],
     "poor":    PALETTE["mif"],
     "extreme": PALETTE["warn"],
 }
@@ -1058,7 +1175,10 @@ def srjf_rmeas(X_, theta_, key, covars, t):
     scale = mu / size
     gamma_sample = jax.random.gamma(k1, size) * scale
     obs = jax.random.poisson(k2, gamma_sample)
-    return jnp.array([obs], dtype=float)
+    # Pypomp 1.0.0 requires rmeas to return a mapping keyed by the observation
+    # names of `ys`, rather than the positionally ordered array accepted by
+    # 0.4.x. Naming the observation removes the ordering assumption.
+    return {"dentadult": obs.astype(float)}
 ```
 
 To ensure biological plausibility and improve numerical stability during optimisation, log transformations map the constrained space $\Theta^+ = \{\theta : \theta_i > 0\}$ to $\mathbb{R}^p$, so the iterated filter can apply Gaussian perturbations without violating positivity:
@@ -1163,7 +1283,7 @@ srjf_shared_df = pd.DataFrame(
 srjf_unit_specific_df = pd.DataFrame(index=[], columns=unit_names)
 
 panelfood = pp.PanelPomp(
-    Pomp_dict=srjf_pomp_dict,
+    pomp_dict=srjf_pomp_dict,
     theta=pp.PanelParameters(
         {"shared": srjf_shared_df, "unit_specific": srjf_unit_specific_df}
     ),
@@ -1222,7 +1342,7 @@ srjf_rw_sd = pp.RWSigma(
 ).geometric_cooling(0.7)
 ```
 
-Maximum likelihood estimation for PanelPOMP models is a non-convex problem with multiple local maxima. We compare four labeled starting-point qualities. The first good start is the R tutorial vector, and the remaining good starts receive small log-scale perturbations with standard deviation 0.08. Medium starts use 0.45 and poor starts use 1.0. Extreme starts use 1.8, which moves a typical parameter by about a factor of six, and they are included to ask whether this compute budget can recover a start that far away. A comparison in which every group converges shows only that the search is robust to the displacements tried; it takes a group that struggles to locate where the method's limit lies. Whether the extreme group is that case is a question for the run, not an assumption: the tables and figures below report what happened, and the text does not presume the answer. Every chain uses the same MIF hyperparameters and a distinct random-number stream. The run with the highest independently evaluated final likelihood is taken as the candidate MLE.
+Maximum likelihood estimation for PanelPOMP models is a non-convex problem with multiple local maxima. We compare three labeled starting-point qualities, spaced so that the groups differ on the likelihood surface and not merely in the parameter vector. Each start is the R tutorial vector perturbed on the log scale: medium starts use standard deviation 0.45, poor starts 1.6, and extreme starts 3.0. An extreme start moves a typical parameter by roughly a factor of twenty. The three values were chosen by measurement rather than by eye: twelve starts drawn at each, evaluated by particle filter before any MIF, had median panel log likelihoods of about $-568$, $-1{,}865$ and $-10{,}400$, so each group sits about half a decade of magnitude below the one before it. The extreme group is included to ask whether this compute budget recovers a start that far away, and it is allowed to answer no. A comparison in which every group converges shows only that the search is robust to the displacements tried; it takes a group that struggles to locate where the method's limit lies. Whether the extreme group is that case is a question for the run, not an assumption: the tables and figures below report what happened, and the text does not presume the answer. Every chain uses the same MIF hyperparameters and a distinct random-number stream. The R tutorial vector itself is not one of these starts; it is evaluated on its own in the chunk below, so the candidate MLE is the product of the displaced searches alone. The run with the highest independently evaluated final likelihood is taken as that candidate.
 
 In Pypomp, this multi-start search is expressed by replicating the panel-parameter object before calling `mif`: each replicate of `panel.theta` becomes one independent chain, and a single call to `panel.mif(...)` advances all chains in parallel under JAX. After MIF, a final particle filter on the terminal estimates yields a low-variance evaluation of $\log L(\hat\phi^{(M)})$.
 
@@ -1253,7 +1373,7 @@ srjf_panel_theta_multi, srjf_start_qualities = make_quality_panel_starts(
 def _evaluate_srjf_start():
     """Evaluate the R tutorial starting vector before MIF."""
     panel = pp.PanelPomp(
-        Pomp_dict=srjf_pomp_dict,
+        pomp_dict=srjf_pomp_dict,
         theta=pp.PanelParameters(panelfood.theta),
     )
     panel.pfilter(
@@ -1274,7 +1394,7 @@ srjf_start_ll_arr = cached("srjf_start_pfilter", _evaluate_srjf_start)
 def _run_srjf_mif():
     """Run MIF + final pfilter and return what the figures and tables need."""
     panel = pp.PanelPomp(
-        Pomp_dict=srjf_pomp_dict, theta=srjf_panel_theta_multi,
+        pomp_dict=srjf_pomp_dict, theta=srjf_panel_theta_multi,
     )
     panel.pfilter(
         J=J_pf_eval, reps=Npf_reps, key=jax.random.key(100),
@@ -1401,7 +1521,7 @@ for k in PARAM_NAMES:
     print(f"  {k:>10s}: {sf(srjf_mle_theta[k])}")
 ```
 
-All four start qualities use identical particles, iterations, perturbations, cooling, and final likelihood evaluation. Only the initial parameter displacement changes. The table reports the initial likelihood, terminal likelihood, Monte Carlo standard error, and improvement for every start, followed by a group summary. The best finite terminal parameter vector is used below. Two details of the call are useful:
+All three start qualities use identical particles, iterations, perturbations, cooling, and final likelihood evaluation. Only the initial parameter displacement changes. The table reports the initial likelihood, terminal likelihood, Monte Carlo standard error, and improvement for every start, followed by a group summary. The best finite terminal parameter vector is used below. Two details of the call are useful:
 
 - **Cooling is configured on `RWSigma`.** Calling `.geometric_cooling(0.7)` makes 0.7 the multiplicative reduction in perturbation standard deviation accumulated over fifty iterations.
 - **`block=False` selects standard PIF.** The MPIF implementation with `block=True` is demonstrated in Diagnostic 2 for the mixed SRJF model containing unit-specific adult mortality.
@@ -1454,7 +1574,7 @@ wrong_unit_df = pd.DataFrame(
     index=["sigSn"],
 )
 panelfood_wrong = pp.PanelPomp(
-    Pomp_dict=srjf_pomp_dict,
+    pomp_dict=srjf_pomp_dict,
     theta=pp.PanelParameters(
         {"shared": wrong_shared_df, "unit_specific": wrong_unit_df}
     ),
@@ -1464,11 +1584,11 @@ panelfood_wrong = pp.PanelPomp(
 # smoke check used above) and at the mis-scaled variant.
 def _run_srjf_scaling():
     panel_correct = pp.PanelPomp(
-        Pomp_dict=srjf_pomp_dict,
+        pomp_dict=srjf_pomp_dict,
         theta=pp.PanelParameters(panelfood.theta),
     )
     panel_wrong = pp.PanelPomp(
-        Pomp_dict=srjf_pomp_dict,
+        pomp_dict=srjf_pomp_dict,
         theta=pp.PanelParameters(panelfood_wrong.theta),
     )
     panel_correct.pfilter(
@@ -1620,7 +1740,7 @@ To assess whether unit-specific parameterisation of adult mortality $\theta^n_S$
 # Replicated pfilter at the all-shared MLE (best replicate from MIF above).
 def _run_srjf_mle_pfilter():
     panel = pp.PanelPomp(
-        Pomp_dict=srjf_pomp_dict,
+        pomp_dict=srjf_pomp_dict,
         theta=srjf_mle_panel_theta,
     )
     panel.pfilter(J=J_pf_eval, reps=Npf_reps, key=jax.random.key(701))
@@ -1704,7 +1824,7 @@ srjf_rw_sd_uspec = pp.RWSigma(
 def _evaluate_srjf_embedded_null():
     """Evaluate the all-shared MLE represented inside the specific model."""
     panel = pp.PanelPomp(
-        Pomp_dict=srjf_pomp_dict,
+        pomp_dict=srjf_pomp_dict,
         theta=panel_theta_uspec.subset(0),
     )
     panel.pfilter(
@@ -1727,7 +1847,7 @@ embedded_difference = embedded_ll - best_ll
 
 def _run_srjf_uspec():
     panel = pp.PanelPomp(
-        Pomp_dict=srjf_pomp_dict,
+        pomp_dict=srjf_pomp_dict,
         theta=pp.PanelParameters(panel_theta_uspec),
     )
     panel.mif(
@@ -1791,21 +1911,22 @@ The displayed table always reports the two likelihood estimates, parameter count
 
 #### Diagnostic 3: MIF searches visualization
 
-Each MIF run produces a trace of log-likelihood values across iterations. @fig-srjf-mif-traces compares the four starting-point qualities under the same algorithmic settings. Individual chains are noisy and overplot each other, so each group is shown as one smoothed median curve with an interquartile band rather than as every evaluated point. The accompanying table converts the same curves into a convergence-speed statistic. Every group is timed against one shared target, the best final median any group reached less 10 log units, so the column answers the same question for each row: how many iterations until this group came within 10 log units of the best outcome? A group already inside the target at its first evaluated iteration reports that iteration, and a group that never arrives reports NaN. Timing each group against its own gain instead would not compare groups: a group starting near the maximum has almost no gain to make, and a group with a large gain reaches most of it early while still finishing far below the others.
+Each MIF run produces a trace of log-likelihood values across iterations. @fig-srjf-mif-traces compares the three starting-point qualities under the same algorithmic settings. Individual chains are noisy and overplot each other, so the left panel shows one smoothed median curve per group. Its vertical axis is logarithmic in the magnitude of the log likelihood, under the increasing map $y \mapsto -\log_{10}(-y)$; a better likelihood is therefore still higher on the axis, but a group sitting tens of thousands of log units below no longer compresses the converging curves onto the top border, which is what a linear axis and an interquartile band around such a group both did. The right panel asks a different question: for each group it takes the chain whose smoothed trace ends highest and plots that chain's remaining distance to the highest log likelihood any start reached, on a logarithmic axis. A reader choosing starting values wants to know what a start of this quality can achieve and how quickly, which is a statement about the best chain rather than the median one. The accompanying table is the median-based counterpart and uses its own target. Every group is timed against one shared target, the best final median any group reached less 10 log units, so the column answers the same question for each row: how many iterations until this group came within 10 log units of the best outcome? A group already inside the target at its first evaluated iteration reports that iteration, and a group that never arrives reports NaN. Timing each group against its own gain instead would not compare groups: a group starting near the maximum has almost no gain to make, and a group with a large gain reaches most of it early while still finishing far below the others.
 
 ```{python}
 #| label: fig-srjf-mif-traces
 #| code-fold: true
 #| fig-width: 10
 #| fig-height: 4
-#| fig-cap: "SRJF MIF convergence by starting-point quality under matched particle counts, iterations, perturbations, cooling, and evaluation settings. Each curve is the smoothed median trace of one quality group; the band in the left panel is that group's interquartile range. The left panel shows the log likelihood itself over its full range. The right panel shows the remaining distance to the best final median on a logarithmic axis, where a constant rate of approach is a straight line whatever the starting distance, so the slopes are comparable across groups. Curves are smoothed with a centred rolling mean, so a curve's plotted starting height is an average over its first iterations rather than the single value the accompanying table reports. Gaps at or below 0.05 are drawn at 0.05."
+#| fig-cap: "SRJF MIF convergence by starting-point quality under matched particle counts, iterations, perturbations, cooling, and evaluation settings. Left: the smoothed median trace of each quality group, on a log-likelihood axis transformed by the increasing map $y \\mapsto -\\log_{10}(-y)$, so that a group tens of thousands of units below does not flatten the rest. Right: for each group, the chain whose smoothed trace ends highest, plotted as its remaining distance to the highest log likelihood reached by any start, on a logarithmic axis where a constant rate of approach is a straight line whatever the starting distance. Curves are smoothed with a centred rolling mean, so a curve's plotted starting height is an average over its first iterations rather than the single value the accompanying table reports. Gaps at or below 0.05 are drawn at 0.05."
 
 # Restrict to the shared-parameter rows; the unit-specific rows hold sigSn,
-# which is fixed at 0 by rw_sd and therefore uninformative. Chains are
-# summarised by quality group instead of drawn individually: with four
-# groups the raw traces overplot, and the question here is how fast each
-# group climbs, not what any single chain did.
+# which is fixed at 0 by rw_sd and therefore uninformative. Two views of the
+# same chains are prepared: the group medians for the left panel, where the
+# raw traces would overplot, and the chains themselves for the right panel,
+# which reports the best chain in each group rather than a typical one.
 srjf_quality_curves = mif_trace_curves(mif_traces, srjf_start_qualities)
+srjf_quality_chains = mif_chain_traces(mif_traces, srjf_start_qualities)
 # Groups that were started, and the subset that produced any finite
 # likelihood. A group with none cannot be drawn, but it must still be named:
 # vanishing from the figure is exactly how a failed start would be hidden.
@@ -1818,7 +1939,8 @@ srjf_groups_absent = [q for q in srjf_quality_groups
                       if q not in srjf_groups_present]
 
 fig, srjf_curve_best = plot_quality_curves(
-    srjf_quality_curves, srjf_groups_present, "SRJF MIF convergence",
+    srjf_quality_curves, srjf_quality_chains, srjf_groups_present,
+    "SRJF MIF convergence",
 )
 ```
 
@@ -1844,7 +1966,7 @@ if srjf_groups_absent:
     )
 ```
 
-The initial and terminal likelihood table quantifies improvement, while the curves show when that improvement occurs. A poor start that rises toward the terminal region demonstrates recovery from a deliberately displaced parameter vector. The extreme group is displaced by a log-scale standard deviation of 1.8 and so begins far below the others. Whether the same budget that moves the poor starts also recovers it is settled by the table above, not here; the sentence printed beneath it states which groups came within 10 log units of the best final median and which did not. The displacement is bounded on purpose. The measurement model returns a fixed $-150$ for each violating observation, so a start thrown far enough to violate every bound would sit on a flat penalty surface with no gradient for MIF to follow. That would demonstrate the constraint device rather than the optimiser, so the extreme jitter is set at 1.8, roughly twice the poor displacement, while normally remaining evaluable. Persistent separation of this kind is what indicates that additional starts, more iterations, or a broader search are needed; it is not evidence that the algorithm is wrong. Production SRJF results are reported in Section S9 of the Supplement.
+The initial and terminal likelihood table quantifies improvement, while the curves show when that improvement occurs. A poor start that rises toward the terminal region demonstrates recovery from a deliberately displaced parameter vector. The extreme group is displaced by a log-scale standard deviation of 3.0 and so begins far below the others: twelve such starts, evaluated before any MIF, had a median panel log likelihood near $-10{,}400$ against $-568$ for medium and $-1{,}865$ for poor, and the worst of them was below $-300{,}000$. The fixed $-150$ per violating observation would floor this ten-unit panel at $-15{,}000$, so most of those values are not the constraint penalty at all: they are ordinary negative-binomial densities evaluated where the model badly misfits the counts, on a surface that is steep rather than flat. A start can still land on the penalty, and one that does has no gradient for MIF to follow; that is one of the ways an extreme start fails, not the only one. Whether 320 iterations at these perturbation sizes are enough to climb back from it is the question the group is there to answer, and a group that does not is the intended demonstration of the method's limit rather than a defect in the run. Whether the same budget that moves the poor starts also recovers the extreme ones is settled by the table above, not here; the sentence printed beneath it states which groups came within 10 log units of the best final median and which did not. Persistent separation of this kind is what indicates that additional starts, more iterations, or a broader search are needed; it is not evidence that the algorithm is wrong. Production SRJF results are reported in Section S9 of the Supplement.
 
 Trace patterns also guide tuning. Erratic trajectories can indicate that $J$ is too small relative to the state dimension and measurement model. Remedies include increasing $J$, modestly enlarging `rw_sd`, or slowing the cooling schedule by raising $a$ from 0.7 to 0.8. Sudden log-likelihood drops warrant checking parameter scales, state bounds, and the log transform in `srjf_par_trans`. Large differences between the best and median terminal values suggest that more independent searches are needed.
 
@@ -1856,7 +1978,7 @@ The interpretation of an MCAP result depends on the observed profile. A sharply 
 
 Pypomp's `pp.mcap(parameter, loglik, level=0.95, span=0.75)` accepts a one-dimensional parameter grid and the corresponding profile log likelihoods. It returns the MCAP estimate, confidence interval, standard errors, and fitted profile curves.
 
-For each focal parameter we take `nprof` values spaced logarithmically over a decade in each direction around the estimate, and at every focal value we start `nprof` independent MIF searches whose remaining free parameters are drawn log-uniformly across the same box. The focal parameter is held fixed by setting its random-walk standard deviation to zero, every search is evaluated by a multi-replicate `pfilter`, and the profile point is the best of the searches at that focal value. This dispersed multi-start design is what keeps the profile away from the fixed $-150$ constraint penalty: a focal value whose starts are all clustered in one region can be trapped where the measurement model penalises every trajectory, whereas starts spread across the box will normally include a feasible one.
+For each focal parameter we take `nprof` values spaced logarithmically over the explored window, and at every focal value we start `nprof` independent MIF searches whose remaining free parameters are drawn log-uniformly across a box spanning a decade in each direction around the estimate. The default window for the focal parameter is that same decade box; $\theta^n_J$ overrides it with the explicit range given below, because a decade proved too narrow to contain either endpoint of its interval. The focal parameter is held fixed by setting its random-walk standard deviation to zero, every search is evaluated by a multi-replicate `pfilter`, and the profile point is the best of the searches at that focal value. This dispersed multi-start design is what keeps the profile away from the fixed $-150$ constraint penalty: a focal value whose starts are all clustered in one region can be trapped where the measurement model penalises every trajectory, whereas starts spread across the box will normally include a feasible one.
 
 Only 95% confidence intervals are reported. The first example, $\theta^n_S$, illustrates a well-identified parameter with an interior maximum and visible curvature. The second, $\theta^n_J$, illustrates a weakly identified parameter whose interval may reach the evaluated range. The figures and concise summaries are shown without raw profile tables or smoothing-sensitivity tables.
 
@@ -1901,7 +2023,7 @@ def _theta_payload(theta_dict):
 
     The unit-specific block is an empty DataFrame whose *columns* carry the
     unit names. Pypomp reads a panel's unit names from those columns, and
-    PanelPomp refuses a theta whose unit names do not match its Pomp_dict, so
+    PanelPomp refuses a theta whose unit names do not match its pomp_dict, so
     `None` cannot be used here even though the model is all-shared. The two
     representations must never be mixed within one list of starts.
     """
@@ -1980,20 +2102,26 @@ def _profile_mask(ll_grid, unrestricted_loglik, label):
     return keep
 
 
-def generate_parameter_profile(prof_name, nprof, seed):
+def generate_parameter_profile(prof_name, nprof, seed, focal_log_range=None):
     """Build a randomised profile design.
 
-    `nprof` focal values spanning [theta/10, theta*10] on the log scale; at
-    each, `nprof` starts with every other free parameter drawn log-uniformly
-    across the same box. sigSn is held at zero.
+    `nprof` focal values spanning [theta/10, theta*10] on the log scale, or
+    `focal_log_range` when the focal parameter needs a wider window than a
+    decade either side of the estimate; at each, `nprof` starts with every
+    other free parameter drawn log-uniformly across the decade box. sigSn is
+    held at zero. The free-parameter box is unaffected by `focal_log_range`:
+    widening the focal grid asks where the profile falls away, not where the
+    nuisance parameters live.
     """
     rng = np.random.default_rng(seed)
     lb = {k: v / PROFILE_BOX_FACTOR for k, v in srjf_mle_theta.items()}
     ub = {k: v * PROFILE_BOX_FACTOR for k, v in srjf_mle_theta.items()}
     free = [k for k in srjf_mle_theta if k not in ("sigSn", prof_name)]
-    focal_values = np.exp(np.linspace(
-        np.log(lb[prof_name]), np.log(ub[prof_name]), nprof,
-    ))
+    focal_lo, focal_hi = (
+        (np.log(lb[prof_name]), np.log(ub[prof_name]))
+        if focal_log_range is None else focal_log_range
+    )
+    focal_values = np.exp(np.linspace(focal_lo, focal_hi, nprof))
     rows = []
     for value in focal_values:
         for _ in range(nprof):
@@ -2016,7 +2144,7 @@ def generate_sd(x, profile_name):
     return sd_list
 
 
-def run_profile(prof_name, nprof, seed):
+def run_profile(prof_name, nprof, seed, focal_log_range=None):
     """Fit every row of the profile design, then keep the best log-likelihood
     at each focal value.
 
@@ -2024,7 +2152,9 @@ def run_profile(prof_name, nprof, seed):
     batches of PROFILE_BATCH rather than one at a time. The batch size trades
     GPU memory against wall time and does not change the method.
     """
-    parameter_shared = generate_parameter_profile(prof_name, nprof, seed)
+    parameter_shared = generate_parameter_profile(
+        prof_name, nprof, seed, focal_log_range=focal_log_range,
+    )
     dent_rw_sd_first = generate_sd(PROFILE_RW_SD, prof_name)
     rw_sd_prof = pp.RWSigma(
         sigmas=dent_rw_sd_first, init_names=[]
@@ -2034,7 +2164,7 @@ def run_profile(prof_name, nprof, seed):
     for i in range(0, len(parameter_shared), PROFILE_BATCH):
         rows = parameter_shared.iloc[i:i + PROFILE_BATCH]
         panel = pp.PanelPomp(
-            Pomp_dict=srjf_pomp_dict,
+            pomp_dict=srjf_pomp_dict,
             theta=pp.PanelParameters(
                 [_theta_payload(r) for r in rows.to_dict("records")]
             ),
@@ -2216,9 +2346,20 @@ name_str = "theta_Jn"
 focal_Jn = name_str
 nprof_Jn = 50          # focal values, and starts per focal value
 
+# theta_Jn is explored over an explicit window rather than a decade either
+# side of the estimate. In the previous run the grid ran from log -10.06 to
+# -5.46 and the smoothed profile peaked at its lower edge, so neither endpoint
+# of the interval could be located inside the evaluated range. The window
+# below covers ten log units and reaches theta_Jn = 1, which is four orders of
+# magnitude above the unrestricted estimate: wide enough for the profile to
+# fall away on the right if it is going to.
+THETA_JN_LOG_RANGE = (-10.0, 0.0)
+
 final_params_Jn, subset_data_theta_Jn = cached(
     "srjf_profile_theta_Jn",
-    lambda: run_profile(name_str, nprof_Jn, seed=2000),
+    lambda: run_profile(
+        name_str, nprof_Jn, seed=2000, focal_log_range=THETA_JN_LOG_RANGE,
+    ),
 )
 log_grid_Jn = subset_data_theta_Jn["log_theta_Jn"].to_numpy()
 ll_grid_Jn = subset_data_theta_Jn["loglik"].to_numpy()
@@ -2264,6 +2405,7 @@ print(
     f"(combined MCSE {sf(mcap_Jn_combined_se)})"
 )
 print(f"    unrestricted MIF estimate (log): {sf(np.log(focal_mle_Jn))}")
+print(f"    explored range (log): {interval(THETA_JN_LOG_RANGE)}")
 ```
 
 ```{python}
@@ -2337,7 +2479,7 @@ _emit_figure(
 )
 ```
 
-This is the weakly identified example. If the 95% interval reaches the explored range, it should not be interpreted as a resolved finite endpoint. This behavior is scientifically plausible because juveniles are not directly observed in the fitted SRJF likelihood. A wider profile grid and additional computation can distinguish a boundary effect from a genuinely flat profile.
+This is the weakly identified example. If the 95% interval reaches the explored range, it should not be interpreted as a resolved finite endpoint. This behavior is scientifically plausible because juveniles are not directly observed in the fitted SRJF likelihood. The grid here spans ten log units, from $\log\theta^n_J = -10$ to $0$, rather than the decade either side of the estimate used for $\theta^n_S$. The narrower grid used previously ran from $-10.06$ to $-5.46$ and its smoothed profile peaked at the lower edge, which is a boundary effect and not an estimate; widening the window is what allows a boundary effect and a genuinely flat profile to be told apart. An interval that still reaches an endpoint of this wider range is evidence for the flat profile rather than for the grid.
 
 ```{python}
 #| label: srjf-timings
@@ -2708,9 +2850,13 @@ def sirjpf_rmeas(X_, theta_, key, covars, t):
     y_dent_inf   = _sirjpf_nb_sample(keys[1], X_["T_In"], theta_["k_In"])
     y_lum_adult  = _sirjpf_nb_sample(keys[2], X_["T_Si"], theta_["k_Si"])
     y_lum_inf    = _sirjpf_nb_sample(keys[3], X_["T_Ii"], theta_["k_Ii"])
-    return jnp.array(
-        [y_dent_adult, y_dent_inf, y_lum_adult, y_lum_inf], dtype=float,
-    )
+    # Keyed by observation name, as Pypomp 1.0.0 requires; see `srjf_rmeas`.
+    return {
+        "dentadult": y_dent_adult.astype(float),
+        "dentinf":   y_dent_inf.astype(float),
+        "lumadult":  y_lum_adult.astype(float),
+        "luminf":    y_lum_inf.astype(float),
+    }
 ```
 
 The parameter transformation log-transforms every strictly positive parameter, leaving the two fixed-at-zero process-noise terms $\sigma^{n}_{S} = \sigma^{l}_{S} = 0$ untouched. As in Section 1, MIF perturbation is applied on the log scale for the perturbed parameters and the two fixed nuisance terms have zero random-walk standard deviation.
@@ -2820,7 +2966,7 @@ sirjpf_unit_specific_df = pd.DataFrame(
     index=[], columns=sirjpf_unit_names_full,
 )
 panelfood_sirjpf = pp.PanelPomp(
-    Pomp_dict=sirjpf_pomp_dict,
+    pomp_dict=sirjpf_pomp_dict,
     theta=pp.PanelParameters(
         {"shared": sirjpf_shared_df,
          "unit_specific": sirjpf_unit_specific_df}
@@ -2838,7 +2984,7 @@ A smoke check confirms the constructed object is correctly scaled.
 
 def _run_sirjpf_smoke():
     panel = pp.PanelPomp(
-        Pomp_dict=sirjpf_pomp_dict,
+        pomp_dict=sirjpf_pomp_dict,
         theta=pp.PanelParameters(panelfood_sirjpf.theta),
     )
     panel.pfilter(
@@ -2863,7 +3009,7 @@ for u, v in zip(sirjpf_unit_names_full,
     print(f"  {u}: {ll(v):>10s}")
 ```
 
-We refine the all-shared R tutorial starting vector with standard PIF. The two fixed process-noise terms remain shared and have random-walk standard deviation zero. The other 24 parameters are perturbed on the log scale with $\sigma_{\mathrm{rw}} = 0.05$. Good, medium, poor, and extreme starting vectors are evaluated with the same first-stage settings. The strongest distinct initial and terminal candidates then receive the same refinement and high-particle likelihood evaluation.
+We refine the all-shared R tutorial starting vector with standard PIF. The two fixed process-noise terms remain shared and have random-walk standard deviation zero. The other 24 parameters are perturbed on the log scale with $\sigma_{\mathrm{rw}} = 0.05$. Medium, poor, and extreme starting vectors are evaluated with the same first-stage settings. The strongest distinct initial and terminal candidates then receive the same refinement and high-particle likelihood evaluation.
 
 ```{python}
 #| label: sirjpf-mif
@@ -2902,7 +3048,7 @@ def _copy_panel_payloads(theta):
 
     `params(as_list=True)` normalises an all-shared panel's unit block to
     None, but PanelPomp reads unit names from the columns of that block and
-    refuses a theta whose unit names do not match its Pomp_dict. The empty
+    refuses a theta whose unit names do not match its pomp_dict. The empty
     frame is therefore rebuilt from the source object's own unit names rather
     than propagated as None, so a copied pool can be used to construct a new
     panel.
@@ -2952,7 +3098,7 @@ def _select_distinct_payloads(payloads, scores, count):
 
 def _run_sirjpf_mif():
     panel = pp.PanelPomp(
-        Pomp_dict=sirjpf_pomp_dict, theta=sirjpf_panel_theta_multi,
+        pomp_dict=sirjpf_pomp_dict, theta=sirjpf_panel_theta_multi,
     )
     initial_payloads = _copy_panel_payloads(panel.theta)
     panel.pfilter(
@@ -2984,7 +3130,7 @@ def _run_sirjpf_mif():
     )
 
     refine_panel = pp.PanelPomp(
-        Pomp_dict=sirjpf_pomp_dict,
+        pomp_dict=sirjpf_pomp_dict,
         theta=pp.PanelParameters(refine_payloads),
     )
     refine_initial_payloads = _copy_panel_payloads(refine_panel.theta)
@@ -3078,22 +3224,23 @@ sirjpf_candidate_table = pd.DataFrame({
     "MCSE": sirjpf_panel_se_per_start,
 })
 print(table_text(sirjpf_candidate_table))
-sirjpf_production_idx = sirjpf_mif_out["candidate_source"].index(
-    "initial good 0"
-)
-sirjpf_production_ll = float(
-    sirjpf_panel_ll_per_start[sirjpf_production_idx]
-)
-sirjpf_production_se = float(
-    sirjpf_panel_se_per_start[sirjpf_production_idx]
-)
+# The R tutorial starting vector is no longer one of the MIF starts: every
+# start is displaced, so none of the candidates is that vector. Its likelihood
+# is the one evaluated on its own above, under the same J_eval and replicate
+# count, which is what makes the difference below meaningful.
+sirjpf_production_ll = sirjpf_panel_ll0
+sirjpf_production_se = sirjpf_panel_se0
+sirjpf_production_gap_se = float(np.sqrt(
+    sirjpf_best_se ** 2 + sirjpf_production_se ** 2
+))
 print(
     f"Selected candidate: {sirjpf_mif_out['candidate_source'][sirjpf_best_idx]}, "
     f"panel logLik = {ll(sirjpf_best_ll)} (MCSE {sf(sirjpf_best_se)})"
 )
 print(
-    "Improvement vs R tutorial starting candidate: "
-    f"{ll(sirjpf_best_ll - sirjpf_production_ll, signed=True)}"
+    "Improvement vs the R tutorial starting vector: "
+    f"{ll(sirjpf_best_ll - sirjpf_production_ll, signed=True)} "
+    f"(combined MCSE {sf(sirjpf_production_gap_se)})"
 )
 
 _, _, sirjpf_stage1_initial_ll, _ = summarize_panel_loglik(
@@ -3177,16 +3324,19 @@ for k in ("rn", "ri", "f_Sn", "f_Si", "theta_Sn", "theta_Si",
     print(f"  {k:>10s}: {sf(sirjpf_selected_theta[k])}")
 ```
 
-The SIRJPF2 searches use standard PIF because the fitted specification contains only shared parameters. The four start qualities use the same algorithmic settings, including the extreme group described in Section 1. Terminal parameter estimates are evaluated by replicated particle filters, and the search with the largest estimated panel log likelihood is retained for subsequent inference.
+The SIRJPF2 searches use standard PIF because the fitted specification contains only shared parameters. The three start qualities use the same algorithmic settings, including the extreme group described in Section 1. Terminal parameter estimates are evaluated by replicated particle filters, and the search with the largest estimated panel log likelihood is retained for subsequent inference.
 
 ```{python}
 #| label: fig-sirjpf-start-quality-traces
 #| code-fold: true
 #| fig-width: 10
 #| fig-height: 4
-#| fig-cap: "SIRJPF2 MIF convergence by starting-point quality under matched algorithmic settings, drawn at the same two scales as the SRJF comparison in Section 1: the log likelihood itself, and the remaining distance to the best final median on a logarithmic axis. The same smoothing and gap-floor conventions apply."
+#| fig-cap: "SIRJPF2 MIF convergence by starting-point quality under matched algorithmic settings, drawn exactly as the SRJF comparison in Section 1: on the left the smoothed group medians on a transformed logarithmic log-likelihood axis, on the right the best chain in each group as its remaining distance to the highest log likelihood any start reached. The same smoothing and gap-floor conventions apply."
 
 sirjpf_quality_curves = mif_trace_curves(
+    sirjpf_mif_out["stage1_traces"], sirjpf_start_qualities
+)
+sirjpf_quality_chains = mif_chain_traces(
     sirjpf_mif_out["stage1_traces"], sirjpf_start_qualities
 )
 sirjpf_quality_groups = [
@@ -3200,7 +3350,8 @@ sirjpf_groups_absent = [q for q in sirjpf_quality_groups
                         if q not in sirjpf_groups_present]
 
 fig, sirjpf_curve_best = plot_quality_curves(
-    sirjpf_quality_curves, sirjpf_groups_present, "SIRJPF2 MIF convergence",
+    sirjpf_quality_curves, sirjpf_quality_chains, sirjpf_groups_present,
+    "SIRJPF2 MIF convergence",
 )
 ```
 
@@ -3314,7 +3465,7 @@ sirjpf_specific_refine_rw = pp.RWSigma(
 
 def _run_sirjpf_specific_stage1(block):
     panel = pp.PanelPomp(
-        Pomp_dict=sirjpf_pomp_dict,
+        pomp_dict=sirjpf_pomp_dict,
         theta=pp.PanelParameters(sirjpf_specific_starts),
     )
     initial_theta = _copy_panel_payloads(panel.theta)
@@ -3412,7 +3563,7 @@ sirjpf_specific_refine_starts = pp.PanelParameters(
 def _run_sirjpf_specific_refine(block):
     """Refine one common pooled start set using PIF or MPIF."""
     panel = pp.PanelPomp(
-        Pomp_dict=sirjpf_pomp_dict,
+        pomp_dict=sirjpf_pomp_dict,
         theta=pp.PanelParameters(sirjpf_specific_refine_starts),
     )
     panel.mif(

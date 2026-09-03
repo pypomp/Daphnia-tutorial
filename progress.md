@@ -135,3 +135,63 @@
 - The author confirmed the log-likelihood formatting exception, so log
   likelihoods stay at two decimal places and everything else keeps four
   significant digits.
+
+## Session: 2026-09-03
+
+### Phase: Figure rework, three start qualities, wider theta_Jn window, Pypomp 1.0.0
+
+- **Status:** implementation complete; GPU render pending.
+- Figures 4 and 8 were rebuilt. The left panel lost its interquartile band and
+  gained a logarithmic log-likelihood axis under the increasing map
+  `y -> -log10(-y)`; the band and the linear axis were both letting one
+  unrecovered group flatten every other curve onto the top border. The right
+  panel now measures against the highest log likelihood any start reached and
+  draws the best chain in each group rather than the group median, because a
+  reader choosing starting values is asking what a start of that quality can
+  achieve.
+- The start-quality comparison dropped `good` and now runs medium, poor and
+  extreme, at log-scale jitter 0.45, 1.6 and 3.0. Run-level start counts moved
+  from 4/12/20 to 3/12/21 so the three groups stay balanced. The R tutorial
+  vector is no longer one of the starts; it is still evaluated on its own.
+- The jitter values were measured, not guessed. Twelve starts at each of
+  eleven standard deviations were evaluated by particle filter at J=600 with
+  four replicates before any MIF. Median panel log likelihoods: 0.45 -> -568,
+  1.6 -> -1865, 3.0 -> -10380, with the worst extreme start below -300,000.
+  Each group therefore sits about half a decade of magnitude below the last.
+- The measurement also corrected a claim carried since 2026-09-02. A badly
+  displaced start is not pinned to the -150 constraint penalty: the panel log
+  likelihood reaches -300,000, which is ordinary negative-binomial density on
+  a badly misfitting trajectory. The surface there is steep, not flat, so the
+  prose no longer says MIF has no gradient to follow.
+- The theta_Jn profile grid now spans log -10 to 0 explicitly instead of a
+  decade either side of the estimate. The previous grid ran from -10.06 to
+  -5.46 and its smoothed profile peaked on the lower edge, so neither endpoint
+  of the interval could be located inside the evaluated range.
+- Pypomp was updated from 0.4.6.0 at ed95e3b to 1.0.0 at 232180a. Two API
+  changes affect the tutorials: `PanelPomp(Pomp_dict=...)` is now `pomp_dict`,
+  and `rmeas` must return a mapping keyed by observation name instead of a
+  positionally ordered array. Both tutorials were updated, not only the
+  advanced one, so the repository does not require two Pypomp versions.
+- `smoke_test.py` was repaired. It sets `DAPHNIA_USE_GPU=0`, which the advanced
+  document has refused since the 2026-08-24 GPU-only change, so the pre-flight
+  check the README recommends could not run the document it most needs to
+  check. It now neutralises the two GPU guards and the two Pypomp pin
+  comparisons in the chunk text it executes, prints how many it relaxed and
+  which Pypomp it resolved, warns if a guard has been reworded out from under
+  it, and prints the document's own provenance metadata at the end. Resolving
+  Pypomp is done through `importlib` rather than by importing it, because
+  importing pulls in JAX and fixes the x64 flag before the setup chunk sets it.
+- Verified locally on CPU: all 42 advanced chunks and all 30 regular chunks
+  compile, labels are unique, every cross-chunk name resolves, `git diff
+  --check` is clean, and a complete run-level-1 execution of the advanced
+  document under Pypomp 1.0.0 finished every chunk.
+- The local run earned its keep. Section 2 selected its comparison baseline by
+  looking up the literal string `"initial good 0"` in the candidate list, which
+  existed only because the first `good` start was special-cased to zero jitter.
+  Removing `good` made that lookup raise `ValueError` two thirds of the way
+  through the document. It now compares against the R tutorial vector's own
+  particle-filter evaluation, computed a few chunks earlier under the same
+  settings, and reports a combined MCSE with the difference. Compiling the
+  chunks would never have found it.
+- Recorded the whole checklist in
+  `Python-code/daphnia_tut_pypomp_advanced_update_20260903.html`.
