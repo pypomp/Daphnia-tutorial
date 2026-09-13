@@ -1,14 +1,14 @@
 #!/bin/bash
 # Render one tutorial on a cluster GPU node and package it for publication.
 #
-# Which document is rendered comes from DAPHNIA_DOC (the file stem, no
-# extension). The level wrappers beside this script set it along with the run
-# level, because a batch job does not reliably inherit the submitting shell's
-# environment.
+# The first argument or DAPHNIA_DOC selects the document (no extension).
+# The second argument optionally selects the run level. Positional arguments
+# avoid relying on environment inheritance in batch jobs; existing level
+# wrappers can still supply these settings through environment variables.
 #
 #   DAPHNIA_DOC=daphnia_tut_pypomp_advanced ./render_gpu.sh
 
-DOC="${DAPHNIA_DOC:-daphnia_tut_pypomp}"
+DOC="${1:-${DAPHNIA_DOC:-daphnia_tut_pypomp}}"
 
 source /apps/anaconda3/etc/profile.d/conda.sh
 conda activate py313
@@ -26,7 +26,7 @@ export TMPDIR=/tmp/tmpdir-$USER
 
 # Chosen before the QMD's first import of JAX; afterwards it is a silent no-op.
 export DAPHNIA_USE_GPU=1
-export DAPHNIA_RUN_LEVEL="${DAPHNIA_RUN_LEVEL:-3}"
+export DAPHNIA_RUN_LEVEL="${2:-${DAPHNIA_RUN_LEVEL:-3}}"
 export DAPHNIA_FORCE_RECOMPUTE="${DAPHNIA_FORCE_RECOMPUTE:-0}"
 export DAPHNIA_DOUBLE_PRECISION="${DAPHNIA_DOUBLE_PRECISION:-1}"
 export DAPHNIA_USE_CPU="${DAPHNIA_USE_CPU:-0}"
@@ -65,7 +65,11 @@ restore_previous() {
 
 # Quarto exhausts memory embedding resources on this cluster, so images are
 # left external here and inlined below.
-quarto render "$DOC.qmd" -M embed-resources:false
+quarto_cache_args=()
+if [ "$DAPHNIA_FORCE_RECOMPUTE" = "1" ]; then
+  quarto_cache_args+=(--cache-refresh)
+fi
+quarto render "$DOC.qmd" -M embed-resources:false "${quarto_cache_args[@]}"
 render_status=$?
 echo "---RENDER: exit=$render_status at $(date)---"
 

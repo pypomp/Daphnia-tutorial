@@ -8,7 +8,7 @@ format:
 bibliography: bib-daphnia.bib
 jupyter: python3
 execute:
-  cache: false
+  cache: true
 freeze: auto
 editor: visual
 author:
@@ -206,26 +206,6 @@ def mif_trace_curves(traces, groups=None):
     )
 
 
-def mif_chain_traces(traces, groups):
-    """Per-chain shared-parameter MIF traces, labelled by quality group.
-
-    `mif_trace_curves` collapses the chains within a group to a median. The
-    right-hand panel of the convergence figures needs the chains themselves,
-    because it reports what the best start in each group achieved rather than
-    what a typical one did.
-    """
-    shared = traces[
-        (traces["unit"] == "shared") & (traces["method"] == "mif")
-    ].copy()
-    shared = shared[np.isfinite(shared["logLik"])].copy()
-    shared["group"] = [groups[int(i)] for i in shared["theta_idx"]]
-    return (
-        shared[["group", "theta_idx", "iteration", "logLik"]]
-        .sort_values(["group", "theta_idx", "iteration"])
-        .reset_index(drop=True)
-    )
-
-
 def smooth_trace(values, frac=0.15):
     """Centred rolling mean, wide enough to read as one curve per group."""
     series = pd.Series(np.asarray(values, dtype=float))
@@ -234,9 +214,6 @@ def smooth_trace(values, frac=0.15):
 
 
 SPEED_TOLERANCE = 10.0  # log units from the best outcome, for the speed target
-
-
-GAP_FLOOR = 0.05  # smallest gap drawn on the logarithmic panel
 
 
 def _round_magnitude_ticks(hi, lo, target=4):
@@ -308,97 +285,28 @@ def _neg_log_yscale(ax, values):
     ax.yaxis.set_minor_locator(mticker.NullLocator())
 
 
-def best_chain_curves(chains, groups, frac=0.15):
-    """The best chain in each group, and the best log likelihood anywhere.
-
-    "Best" is measured on the smoothed trace, so that one lucky iteration of a
-    perturbed particle filter cannot promote a chain: a group's representative
-    is the chain whose smoothed trace ends highest, and the reference is the
-    highest smoothed value reached by any chain from any start.
-
-    Returns a mapping from group to (iterations, smoothed trace) and that
-    reference. A group with no finite trace is absent from the mapping.
-    """
-    per_group, reference = {}, -np.inf
-    for group in groups:
-        block = chains[chains["group"] == group]
-        best_end, best_curve = -np.inf, None
-        for _, chain in block.groupby("theta_idx", sort=True):
-            iterations = chain["iteration"].to_numpy(dtype=float)
-            smoothed = smooth_trace(chain["logLik"], frac=frac).to_numpy(
-                dtype=float
-            )
-            if not smoothed.size or not np.any(np.isfinite(smoothed)):
-                continue
-            reference = max(reference, float(np.nanmax(smoothed)))
-            if float(smoothed[-1]) > best_end:
-                best_end, best_curve = float(smoothed[-1]), (iterations,
-                                                             smoothed)
-        if best_curve is not None:
-            per_group[group] = best_curve
-    return per_group, (reference if np.isfinite(reference) else np.nan)
-
-
-def plot_quality_curves(curves, chains, groups, title, floor=GAP_FLOOR):
-    """Draw grouped convergence curves at two complementary scales.
-
-    The left panel is the log likelihood itself, one smoothed median curve per
-    group, on the logarithmic axis described in `_neg_log_yscale`. A group that
-    does not recover sits tens of thousands of log units below the rest; on a
-    linear axis it compresses every other curve onto the top border, which is
-    what an interquartile band around it did as well. The band is therefore
-    gone and the axis is transformed instead.
-
-    The right panel is the remaining distance to the best log likelihood any
-    start reached, on a logarithmic axis, for the best chain in each group. A
-    constant rate of approach is a straight line there whatever the starting
-    distance, so the slopes are directly comparable and they are the
-    convergence speeds this comparison is about. Taking each group's best chain
-    rather than its median answers what that start quality can achieve, which
-    is the question a reader choosing starting values is asking. Gaps at or
-    below `floor` are drawn at `floor`, since zero has no place on a
-    logarithmic axis.
-    """
-    best_chains, reference = best_chain_curves(chains, groups)
-
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True)
-    left_values = []
+def plot_quality_curves(curves, groups, title):
+    """Draw smoothed group medians on the transformed log-likelihood axis."""
+    fig, ax = plt.subplots(figsize=(7, 4))
+    values = []
     for group in groups:
         curve = curves[curves["group"] == group]
         if len(curve):
             colour = QUALITY_COLORS[group]
             smoothed = smooth_trace(curve["median"]).to_numpy(dtype=float)
-            left_values.append(smoothed)
-            axes[0].plot(curve["iteration"], smoothed,
-                         color=colour, linewidth=1.8, label=group)
-        if group in best_chains and np.isfinite(reference):
-            iterations, chain_curve = best_chains[group]
-            gap = np.maximum(reference - chain_curve, floor)
-            axes[1].plot(iterations, gap, color=QUALITY_COLORS[group],
-                         linewidth=1.8, label=group)
+            values.append(smoothed)
+            ax.plot(curve["iteration"], smoothed,
+                    color=colour, linewidth=1.8, label=group)
 
-    for ax in axes:
-        ax.set_xlabel("Iteration", fontsize=FONTS["axis_label"])
-        ax.tick_params(axis="both", labelsize=FONTS["tick"])
-
-    _neg_log_yscale(axes[0], np.concatenate(left_values) if left_values
-                    else np.array([]))
-    axes[0].set_ylabel("Log likelihood (log scale)",
-                       fontsize=FONTS["axis_label"])
-    axes[0].set_title(f"{title}: median by group",
-                      fontsize=FONTS["panel_title"])
-    if axes[0].get_legend_handles_labels()[0]:
-        axes[0].legend(title="Start", fontsize=FONTS["legend"], frameon=False)
-
-    axes[1].set_yscale("log")
-    axes[1].set_ylabel("Distance to best start, best chain in group",
-                       fontsize=FONTS["axis_label"])
-    axes[1].set_title(
-        f"Remaining gap to {ll(reference)}, log scale",
-        fontsize=FONTS["panel_title"],
-    )
+    ax.set_xlabel("Iteration", fontsize=FONTS["axis_label"])
+    ax.tick_params(axis="both", labelsize=FONTS["tick"])
+    _neg_log_yscale(ax, np.concatenate(values) if values else np.array([]))
+    ax.set_ylabel("Log likelihood (log scale)", fontsize=FONTS["axis_label"])
+    ax.set_title(f"{title}: median by group", fontsize=FONTS["panel_title"])
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(title="Start", fontsize=FONTS["legend"], frameon=False)
     fig.tight_layout()
-    return fig, reference
+    return fig
 
 
 def describe_arrivals(speed_table, tolerance=SPEED_TOLERANCE):
@@ -602,8 +510,8 @@ def _git_commit(path):
 # changes. Payloads from older cache schemas are deliberately ignored.
 MODEL_CONTRACT_VERSION = "daphnia-production-2026-07-16"
 CACHE_SCHEMA_VERSION = "daphnia-qmd-cache-v7"
-EXPECTED_PYPOMP_VERSION = "1.0.0"
-EXPECTED_PYPOMP_COMMIT = "232180acfafeefc7420755a9896827e3d3d0cf35"
+EXPECTED_PYPOMP_VERSION = "1.0.2"
+EXPECTED_PYPOMP_COMMIT = "2983c603334611657ab575e5eff4932390880e55"
 QMD_PATH = _find_existing_path(
     "daphnia_tut_pypomp_advanced.qmd",
 )
@@ -653,7 +561,12 @@ CACHE_DIR = CACHE_ROOT / f"cache_{CACHE_SCHEMA_VERSION}_{CACHE_FINGERPRINT}"
 CACHE_DIR.mkdir(exist_ok=True)
 force_recompute = os.getenv("DAPHNIA_FORCE_RECOMPUTE", "0") == "1"
 
-TIMINGS = {}  # populated by cached(); reported at end of each section.
+# These package archives use a different format from cached() below.
+if force_recompute:
+    for archive in ("srjf_start_pfilter.bake.pkl", "srjf_mif_search.stew.pkl"):
+        (CACHE_DIR / archive).unlink(missing_ok=True)
+
+TIMINGS = {}  # computation times, including those restored from archives.
 
 
 def cached(name, fn):
@@ -1382,15 +1295,6 @@ def _evaluate_srjf_start():
     return np.asarray(panel.results_history[-1].logLiks.values)
 
 
-srjf_start_ll_arr = cached("srjf_start_pfilter", _evaluate_srjf_start)
-(
-    ll_per_unit_all,
-    ll_per_unit_se_all,
-    panel_ll_all,
-    panel_ll_se_all,
-) = summarize_panel_loglik(srjf_start_ll_arr)
-
-
 def _run_srjf_mif():
     """Run MIF + final pfilter and return what the figures and tables need."""
     panel = pp.PanelPomp(
@@ -1423,11 +1327,62 @@ def _finite_argmax(values):
     if not len(finite):
         raise ValueError("Cannot select a best result: all values are non-finite.")
     return int(finite[np.argmax(values[finite])])
+```
 
+#### Saving computations with bake and stew
 
-mif_out = cached("srjf_mif_search", _run_srjf_mif)
-mif_ll_arr = mif_out["ll_arr"]                       # (Nstarts, U, reps)
-mif_traces = mif_out["traces"]
+`bake` and `stew` save computations so they can be reused. Both execute Python code supplied as a string when no matching archive exists. On later calls, they load the saved results if the code, declared dependencies, and seed settings match. `bake` returns one result; `stew` restores the variables assigned by its code block and returns their names. Here, `bake` saves the initial particle-filter likelihood array, while `stew` saves the MIF results used by the tables and figures. We use `compatibility="R"` to select the tested R-style archive behavior; the code and random draws remain Python/JAX.
+
+In each call, `file` names the archive, `dir` selects its directory, and `dependson=CACHE_METADATA` tracks the tutorial source, data, software versions, precision, and computation settings. The helpers retain their explicit JAX keys. Because timing is enabled, R-mode `bake` returns an `ArchiveValue`: `.value` contains the likelihood array and `.system_time["elapsed"]` records computation time in seconds.
+
+```{python}
+#| label: srjf-start-bake
+#| code-fold: false
+
+srjf_start_archive = pp.bake(
+    file="srjf_start_pfilter.bake.pkl",
+    expr="_evaluate_srjf_start()",
+    dir=CACHE_DIR,
+    dependson=CACHE_METADATA,
+    compatibility="R",
+)
+srjf_start_ll_arr = srjf_start_archive.value
+TIMINGS["srjf_start_pfilter"] = srjf_start_archive.system_time["elapsed"]
+```
+
+`stew` restores the following assigned variables into the notebook workspace. The `mif_out` bundle includes initial and final likelihood evaluations; the additional names give direct access to the final likelihood array, convergence traces, and parameter estimates. Its timing metadata is restored as `_system_time`. For both functions, a loaded timing describes the original computation, not the time spent loading the file.
+
+```{python}
+#| label: srjf-search-stew
+#| code-fold: false
+
+srjf_saved_names = pp.stew(
+    file="srjf_mif_search.stew.pkl",
+    expr="""
+        mif_out = _run_srjf_mif()
+        mif_ll_arr = mif_out["ll_arr"]
+        mif_traces = mif_out["traces"]
+        srjf_final_theta = mif_out["final_theta"]
+    """,
+    dir=CACHE_DIR,
+    dependson=CACHE_METADATA,
+    compatibility="R",
+)
+TIMINGS["srjf_mif_search"] = _system_time["elapsed"]
+```
+
+The document also enables Quarto's execution cache with `execute.cache: true`. That cache can reuse notebook outputs without executing Python; `bake` and `stew` check their archives when Python runs. An initial computation is still required. After changing external data, the installed package, or environment settings, use `quarto render daphnia_tut_pypomp_advanced.qmd --cache-refresh` so the dependency checks execute. To also recompute every saved analysis, set `DAPHNIA_FORCE_RECOMPUTE=1` for that command. The existing provenance checks conservatively invalidate analysis archives whenever the QMD changes. See the [installation and cache instructions](README.md#prerequisites) for the required package revision and `jupyter-cache` dependency.
+
+```{python}
+#| label: srjf-mif-summary
+#| code-fold: true
+
+(
+    ll_per_unit_all,
+    ll_per_unit_se_all,
+    panel_ll_all,
+    panel_ll_se_all,
+) = summarize_panel_loglik(srjf_start_ll_arr)
 _, _, srjf_initial_ll, srjf_initial_se = summarize_panel_loglik(
     mif_out["initial_ll"]
 )
@@ -1439,7 +1394,7 @@ best_ll = float(panel_ll_per_start[best_idx])
 best_ll_se = float(panel_se_per_start[best_idx])
 unit_ll_best = unit_ll_per_start[best_idx]
 
-best_theta_dict = mif_out["final_theta"][best_idx]
+best_theta_dict = srjf_final_theta[best_idx]
 mle_shared_df = best_theta_dict["shared"]
 srjf_mif_candidate_theta = {**srjf_shared_theta}
 for name in mle_shared_df.index:
@@ -1516,9 +1471,6 @@ print(
     f"{ll(srjf_reference_difference, signed=True)} "
     f"(combined MCSE {sf(srjf_reference_gap_se)})"
 )
-print("\nSelected all-shared MIF parameters:")
-for k in PARAM_NAMES:
-    print(f"  {k:>10s}: {sf(srjf_mle_theta[k])}")
 ```
 
 All three start qualities use identical particles, iterations, perturbations, cooling, and final likelihood evaluation. Only the initial parameter displacement changes. The table reports the initial likelihood, terminal likelihood, Monte Carlo standard error, and improvement for every start, followed by a group summary. The best finite terminal parameter vector is used below. Two details of the call are useful:
@@ -1911,22 +1863,19 @@ The displayed table always reports the two likelihood estimates, parameter count
 
 #### Diagnostic 3: MIF searches visualization
 
-Each MIF run produces a trace of log-likelihood values across iterations. @fig-srjf-mif-traces compares the three starting-point qualities under the same algorithmic settings. Individual chains are noisy and overplot each other, so the left panel shows one smoothed median curve per group. Its vertical axis is logarithmic in the magnitude of the log likelihood, under the increasing map $y \mapsto -\log_{10}(-y)$; a better likelihood is therefore still higher on the axis, but a group sitting tens of thousands of log units below no longer compresses the converging curves onto the top border, which is what a linear axis and an interquartile band around such a group both did. The right panel asks a different question: for each group it takes the chain whose smoothed trace ends highest and plots that chain's remaining distance to the highest log likelihood any start reached, on a logarithmic axis. A reader choosing starting values wants to know what a start of this quality can achieve and how quickly, which is a statement about the best chain rather than the median one. The accompanying table is the median-based counterpart and uses its own target. Every group is timed against one shared target, the best final median any group reached less 10 log units, so the column answers the same question for each row: how many iterations until this group came within 10 log units of the best outcome? A group already inside the target at its first evaluated iteration reports that iteration, and a group that never arrives reports NaN. Timing each group against its own gain instead would not compare groups: a group starting near the maximum has almost no gain to make, and a group with a large gain reaches most of it early while still finishing far below the others.
+Each MIF run produces a trace of log-likelihood values across iterations. @fig-srjf-mif-traces compares the three starting-point qualities under the same algorithmic settings. Individual chains are noisy and overplot each other, so the figure shows one smoothed median curve per group. Its vertical axis is logarithmic in the magnitude of the log likelihood, under the increasing map $y \mapsto -\log_{10}(-y)$; a better likelihood is therefore still higher on the axis, but a group sitting tens of thousands of log units below no longer compresses the converging curves onto the top border, which is what a linear axis and an interquartile band around such a group both did. The accompanying table quantifies convergence speed from the same group medians. Every group is timed against one shared target, the best final median any group reached less 10 log units, so the column answers the same question for each row: how many iterations until this group came within 10 log units of the best outcome? A group already inside the target at its first evaluated iteration reports that iteration, and a group that never arrives reports NaN. Timing each group against its own gain instead would not compare groups: a group starting near the maximum has almost no gain to make, and a group with a large gain reaches most of it early while still finishing far below the others.
 
 ```{python}
 #| label: fig-srjf-mif-traces
 #| code-fold: true
-#| fig-width: 10
+#| fig-width: 7
 #| fig-height: 4
-#| fig-cap: "SRJF MIF convergence by starting-point quality under matched particle counts, iterations, perturbations, cooling, and evaluation settings. Left: the smoothed median trace of each quality group, on a log-likelihood axis transformed by the increasing map $y \\mapsto -\\log_{10}(-y)$, so that a group tens of thousands of units below does not flatten the rest. Right: for each group, the chain whose smoothed trace ends highest, plotted as its remaining distance to the highest log likelihood reached by any start, on a logarithmic axis where a constant rate of approach is a straight line whatever the starting distance. Curves are smoothed with a centred rolling mean, so a curve's plotted starting height is an average over its first iterations rather than the single value the accompanying table reports. Gaps at or below 0.05 are drawn at 0.05."
+#| fig-cap: "SRJF MIF convergence by starting-point quality under matched particle counts, iterations, perturbations, cooling, and evaluation settings. Each curve is the smoothed median trace of a quality group, on a log-likelihood axis transformed by the increasing map $y \\mapsto -\\log_{10}(-y)$, so that a group tens of thousands of units below does not flatten the rest. Curves are smoothed with a centred rolling mean, so a curve's plotted starting height is an average over its first iterations rather than the single value the accompanying table reports."
 
 # Restrict to the shared-parameter rows; the unit-specific rows hold sigSn,
-# which is fixed at 0 by rw_sd and therefore uninformative. Two views of the
-# same chains are prepared: the group medians for the left panel, where the
-# raw traces would overplot, and the chains themselves for the right panel,
-# which reports the best chain in each group rather than a typical one.
+# which is fixed at 0 by rw_sd and therefore uninformative. Group medians
+# summarise the chains without overplotting their raw traces.
 srjf_quality_curves = mif_trace_curves(mif_traces, srjf_start_qualities)
-srjf_quality_chains = mif_chain_traces(mif_traces, srjf_start_qualities)
 # Groups that were started, and the subset that produced any finite
 # likelihood. A group with none cannot be drawn, but it must still be named:
 # vanishing from the figure is exactly how a failed start would be hidden.
@@ -1938,8 +1887,8 @@ srjf_groups_present = [
 srjf_groups_absent = [q for q in srjf_quality_groups
                       if q not in srjf_groups_present]
 
-fig, srjf_curve_best = plot_quality_curves(
-    srjf_quality_curves, srjf_quality_chains, srjf_groups_present,
+fig = plot_quality_curves(
+    srjf_quality_curves, srjf_groups_present,
     "SRJF MIF convergence",
 )
 ```
@@ -3217,13 +3166,7 @@ for name in sirjpf_selected_shared_df.index:
         sirjpf_selected_shared_df.loc[name, "shared"]
     )
 
-print(f"MIF + final pfilter wall: {sf(TIMINGS['sirjpf_mif'])}s")
-sirjpf_candidate_table = pd.DataFrame({
-    "candidate": sirjpf_mif_out["candidate_source"],
-    "panel_logLik": sirjpf_panel_ll_per_start,
-    "MCSE": sirjpf_panel_se_per_start,
-})
-print(table_text(sirjpf_candidate_table))
+
 # The R tutorial starting vector is no longer one of the MIF starts: every
 # start is displaced, so none of the candidates is that vector. Its likelihood
 # is the one evaluated on its own above, under the same J_eval and replicate
@@ -3233,15 +3176,6 @@ sirjpf_production_se = sirjpf_panel_se0
 sirjpf_production_gap_se = float(np.sqrt(
     sirjpf_best_se ** 2 + sirjpf_production_se ** 2
 ))
-print(
-    f"Selected candidate: {sirjpf_mif_out['candidate_source'][sirjpf_best_idx]}, "
-    f"panel logLik = {ll(sirjpf_best_ll)} (MCSE {sf(sirjpf_best_se)})"
-)
-print(
-    "Improvement vs the R tutorial starting vector: "
-    f"{ll(sirjpf_best_ll - sirjpf_production_ll, signed=True)} "
-    f"(combined MCSE {sf(sirjpf_production_gap_se)})"
-)
 
 _, _, sirjpf_stage1_initial_ll, _ = summarize_panel_loglik(
     sirjpf_mif_out["initial_ll"]
@@ -3316,12 +3250,6 @@ print(
     f"{len(sirjpf_refinement_panel_ll)}"
 )
 print(table_text(sirjpf_refinement_table))
-print(
-    "\nAll-shared SIRJPF2 selected parameters:"
-)
-for k in ("rn", "ri", "f_Sn", "f_Si", "theta_Sn", "theta_Si",
-         "theta_In", "theta_Ii", "k_Sn", "k_Si", "k_In", "k_Ii"):
-    print(f"  {k:>10s}: {sf(sirjpf_selected_theta[k])}")
 ```
 
 The SIRJPF2 searches use standard PIF because the fitted specification contains only shared parameters. The three start qualities use the same algorithmic settings, including the extreme group described in Section 1. Terminal parameter estimates are evaluated by replicated particle filters, and the search with the largest estimated panel log likelihood is retained for subsequent inference.
@@ -3329,14 +3257,11 @@ The SIRJPF2 searches use standard PIF because the fitted specification contains 
 ```{python}
 #| label: fig-sirjpf-start-quality-traces
 #| code-fold: true
-#| fig-width: 10
+#| fig-width: 7
 #| fig-height: 4
-#| fig-cap: "SIRJPF2 MIF convergence by starting-point quality under matched algorithmic settings, drawn exactly as the SRJF comparison in Section 1: on the left the smoothed group medians on a transformed logarithmic log-likelihood axis, on the right the best chain in each group as its remaining distance to the highest log likelihood any start reached. The same smoothing and gap-floor conventions apply."
+#| fig-cap: "SIRJPF2 MIF convergence by starting-point quality under matched algorithmic settings, drawn as in the SRJF comparison in Section 1. Each curve shows a smoothed group median on the transformed logarithmic log-likelihood axis, using the same centred rolling mean."
 
 sirjpf_quality_curves = mif_trace_curves(
-    sirjpf_mif_out["stage1_traces"], sirjpf_start_qualities
-)
-sirjpf_quality_chains = mif_chain_traces(
     sirjpf_mif_out["stage1_traces"], sirjpf_start_qualities
 )
 sirjpf_quality_groups = [
@@ -3349,8 +3274,8 @@ sirjpf_groups_present = [
 sirjpf_groups_absent = [q for q in sirjpf_quality_groups
                         if q not in sirjpf_groups_present]
 
-fig, sirjpf_curve_best = plot_quality_curves(
-    sirjpf_quality_curves, sirjpf_quality_chains, sirjpf_groups_present,
+fig = plot_quality_curves(
+    sirjpf_quality_curves, sirjpf_groups_present,
     "SIRJPF2 MIF convergence",
 )
 ```
@@ -3655,58 +3580,36 @@ print(
 #| code-fold: true
 #| output: asis
 
-fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+fig, ax = plt.subplots(figsize=(7, 4))
 
 for curve, method, color in (
     (pif_stage1_curve, "PIF", PALETTE["adult"]),
     (mpif_stage1_curve, "MPIF", PALETTE["infected"]),
 ):
-    axes[0].plot(
+    ax.plot(
         curve["iteration"], smooth_trace(curve["median"]), label=method,
         color=color, linewidth=1.8,
     )
-    axes[0].fill_between(
+    ax.fill_between(
         curve["iteration"],
         smooth_trace(curve["lower"]),
         smooth_trace(curve["upper"]),
         color=color, alpha=0.16, linewidth=0,
     )
-axes[0].set_xlabel("Iteration", fontsize=FONTS["axis_label"])
-axes[0].set_ylabel("Trace log likelihood", fontsize=FONTS["axis_label"])
-axes[0].set_title("Matched medium-start convergence",
-                  fontsize=FONTS["panel_title"])
-axes[0].legend(frameon=False, fontsize=FONTS["legend"])
-
-x = np.array([0.0, 1.0])
-for i in range(len(sirjpf_pif["panel_ll"])):
-    vals = [sirjpf_pif["panel_ll"][i], sirjpf_mpif["panel_ll"][i]]
-    errs = [
-        2 * sirjpf_pif["panel_se"][i],
-        2 * sirjpf_mpif["panel_se"][i],
-    ]
-    axes[1].plot(x, vals, color=PALETTE["quad"], alpha=0.45, linewidth=0.8)
-    axes[1].errorbar(
-        x, vals, yerr=errs, fmt="o", capsize=2,
-        color=PALETTE["adult"], ecolor=PALETTE["quad"],
-    )
-axes[1].set_xticks(x)
-axes[1].set_xticklabels(["PIF", "MPIF"])
-axes[1].set_ylabel("Final panel log likelihood", fontsize=FONTS["axis_label"])
-axes[1].set_title(
-    "Independently evaluated terminals",
-    fontsize=FONTS["panel_title"],
-)
-for ax in axes:
-    ax.tick_params(axis="both", labelsize=FONTS["tick"])
+ax.set_xlabel("Iteration", fontsize=FONTS["axis_label"])
+ax.set_ylabel("Trace log likelihood", fontsize=FONTS["axis_label"])
+ax.set_title("Matched medium-start convergence",
+             fontsize=FONTS["panel_title"])
+ax.legend(frameon=False, fontsize=FONTS["legend"])
+ax.tick_params(axis="both", labelsize=FONTS["tick"])
 fig.tight_layout()
 _emit_figure(
     fig,
     label="fig-sirjpf-pif-mpif",
     caption=(
         "Matched PIF and MPIF comparison for unit-specific infected mortality. "
-        "The left panel shows median convergence traces and interquartile "
-        "bands from common medium-quality starts. The right panel pairs "
-        "independently evaluated refined terminals with $\\pm 2$ MCSE."
+        "Median convergence traces and interquartile bands from common "
+        "medium-quality starts."
     ),
 )
 ```

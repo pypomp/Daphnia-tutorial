@@ -44,41 +44,70 @@ dependencies, and gates on them), `smoke_test.py` (pre-flight check) and
 
 ### Prerequisites
 
-Both tutorials target Pypomp 1.0.0 at commit
-`232180acfafeefc7420755a9896827e3d3d0cf35`, and the released PyPI package is not
-a substitute. Pypomp 1.0.0 needs Python 3.11 or newer. The rendered documents
-currently in this directory predate the pin change: they were produced with
-0.4.6.0 at `ed95e3bd46c1cc188fc8f7d83e89c6d5035b977c`, and the next render
-replaces them.
+The advanced tutorial requires Pypomp **1.0.2 at commit
+`2983c603334611657ab575e5eff4932390880e55`**, which includes the bake/stew
+feature. Install this exact development revision; the version number alone
+does not identify a build containing these functions. Python 3.11 or newer
+is required. The regular tutorial retains its existing 1.0.0 reference at
+`232180acfafeefc7420755a9896827e3d3d0cf35`.
 
-Only `daphnia_tut_pypomp_advanced.qmd` *enforces* this. It reads the git HEAD of
-whatever `import pypomp` resolves to and stops with a `RuntimeError` if it is not
-that revision. `daphnia_tut_pypomp.qmd` has no such guard, so it will run against any Pypomp
-you give it and quietly produce numbers from that version instead. Check the
-revision yourself before trusting a render of it:
-
-```bash
-git -C ~/git/pypomp rev-parse HEAD    # want 232180acfafeefc7420755a9896827e3d3d0cf35
-python -c "import pypomp; print(pypomp.__file__, pypomp.__version__)"
-```
-
-The commit is the reliable half of that. `pypomp.__version__` reads the
-installed distribution metadata, so an editable install whose metadata was not
-refreshed — which is what happens when `pip install -e` is refused, for example
-on Python 3.10 — reports the old version while importing the new source.
+The advanced QMD checks both the imported checkout's Git commit and its
+installed version metadata. For a new checkout, install into the Python
+environment selected for Quarto:
 
 ```bash
 git clone https://github.com/pypomp/pypomp.git ~/git/pypomp
 cd ~/git/pypomp
-git checkout 232180acfafee
-cd ~/git/Daphnia-tutorial/Python-code
-pip install -e ~/git/pypomp
+git checkout 2983c603334611657ab575e5eff4932390880e55
+python -m pip install -e .
+python -m pip install jupyter-cache xlrd
+
+git rev-parse HEAD
+python -c "import pypomp; print(pypomp.__file__, pypomp.__version__)"
 ```
 
-Installing Pypomp also installs JAX. The checkout location does not matter,
-provided it is at the pinned revision and installed with `-e`. The rendered
-document prints the resolved Pypomp path, commit and JAX backend at the top;
-that banner is the record to quote when reporting a result.
+For an existing clone, fetch the feature branch with
+`git fetch origin bake-stew-development` before checking out that commit.
+An editable install can have stale version metadata after switching commits;
+rerun `python -m pip install -e .` if the QMD reports a mismatch.
+
+Set `QUARTO_PYTHON` to that environment's Python executable. The advanced
+analysis requires a CUDA-capable JAX installation and a GPU; the separate
+`smoke_test.py` supports CPU structural checks. Existing HTML files are prior
+renders and do not contain this update until the advanced QMD is rendered
+again. Updating the package requires fresh numerical validation before
+attributing prior numerical results to the new revision.
+
+### Execution caching and computation archives
+
+The advanced QMD enables `execute.cache: true`, which requires
+`jupyter-cache`. Quarto can reuse notebook outputs when code is unchanged.
+The SRJF examples additionally use `bake` for the initial likelihood array
+and `stew` for named MIF outputs. When Python executes, these functions
+validate declared dependencies and either compute and save or load results.
+Their `.bake.pkl` and `.stew.pkl` files are separate from the remaining custom
+cache files; the formats are not interchangeable.
+
+After changing data, packages, or environment settings such as
+`DAPHNIA_RUN_LEVEL` or `DAPHNIA_DOUBLE_PRECISION`, explicitly refresh Quarto's
+cache so the QMD's provenance checks run:
+
+```bash
+quarto render daphnia_tut_pypomp_advanced.qmd --cache-refresh
+```
+
+To force the analysis computations to run as well:
+
+```bash
+DAPHNIA_FORCE_RECOMPUTE=1 quarto render daphnia_tut_pypomp_advanced.qmd --cache-refresh
+```
+
+For direct Quarto commands, the environment flag alone cannot bypass cached
+execution. `render_gpu.sh` automatically adds `--cache-refresh` when
+`DAPHNIA_FORCE_RECOMPUTE=1`, including calls from the level and precision
+wrappers. A first render or a changed dependency still requires computation;
+the QMD's conservative archive fingerprint also changes whenever the QMD
+file changes. See [Quarto's caching documentation](https://quarto.org/docs/computations/caching.html).
 
 ### Double precision
 
@@ -157,6 +186,62 @@ run as the measurement. Render it by naming it:
 ```bash
 DAPHNIA_DOC=daphnia_tut_pypomp_advanced ./render_gpu_level2.sh
 ```
+
+### Submitting the advanced tutorial to CBS ResearchGrid
+
+On the login node, update the tutorial checkout, activate the environment used
+by the renderer, and install the exact Pypomp revision from the prerequisites
+above. The existing cluster scripts use `/apps/anaconda3` and `py313`:
+
+```bash
+cd ~/git/Daphnia-tutorial
+git pull --ff-only
+source /apps/anaconda3/etc/profile.d/conda.sh
+conda activate py313
+
+cd ~/git/pypomp
+git fetch origin bake-stew-development
+git checkout 2983c603334611657ab575e5eff4932390880e55
+python -m pip install -e .
+python -m pip install jupyter-cache xlrd
+```
+
+Use your existing cluster checkout paths if they differ from `~/git`.
+The environment must already have working CUDA-enabled JAX, as in previous
+GPU renders. Submit from the tutorial's `Python-code` directory using the
+project's existing ResearchGrid GPU options:
+
+```bash
+cd ~/git/Daphnia-tutorial/Python-code
+grid_run --grid_gpu --grid_mem=62G --grid_submit=batch \
+  ./render_gpu_level2.sh daphnia_tut_pypomp_advanced
+```
+
+The document name is passed as an argument to the job, so it does not depend
+on the login shell's exported variables. The level-2 wrapper selects float64, disables the optional CPU
+benchmark, and requests fresh computation. The renderer refreshes Quarto's
+cache and packages a self-contained `daphnia_tut_pypomp_advanced.html`.
+It does not run the separate float32 comparison or overwrite an existing
+`daphnia_tut_pypomp_advanced_float64.html` snapshot.
+
+Monitor the job with `qstat -u "$USER"` and inspect the job output file
+reported by the scheduler.
+
+Successful packaging ends with `---PUBLISHED: daphnia_tut_pypomp_advanced.html`.
+For a later render that reuses matching cached outputs, submit the base
+renderer with document and run-level arguments:
+
+```bash
+grid_run --grid_gpu --grid_mem=62G --grid_submit=batch \
+  ./render_gpu.sh daphnia_tut_pypomp_advanced 2
+```
+
+This uses the renderer's defaults: float64, no optional CPU benchmark, and
+no forced recomputation. Clear any previous `DAPHNIA_FORCE_RECOMPUTE` or
+precision overrides in your submission environment when reusing those defaults.
+
+Submit one render at a time. The first run of this updated QMD needs new
+computations because its source and package revision changed.
 
 ### Rendering both tutorials
 
