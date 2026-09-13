@@ -1283,34 +1283,37 @@ srjf_panel_theta_multi, srjf_start_qualities = make_quality_panel_starts(
 )
 
 
-def _evaluate_srjf_start():
+def _evaluate_srjf_start(budget=None, key_seed=0):
     """Evaluate the R tutorial starting vector before MIF."""
+    budget = RL_SRJF if budget is None else budget
     panel = pp.PanelPomp(
         pomp_dict=srjf_pomp_dict,
         theta=pp.PanelParameters(panelfood.theta),
     )
     panel.pfilter(
-        J=J_pf_eval, reps=Npf_reps, key=jax.random.key(0),
+        J=budget["J_eval"], reps=budget["pf_reps"], key=jax.random.key(key_seed),
     )
     return np.asarray(panel.results_history[-1].logLiks.values)
 
 
-def _run_srjf_mif():
+def _run_srjf_mif(budget=None, starts=None, key_seed=100):
     """Run MIF + final pfilter and return what the figures and tables need."""
+    budget = RL_SRJF if budget is None else budget
+    starts = srjf_panel_theta_multi if starts is None else starts
     panel = pp.PanelPomp(
-        pomp_dict=srjf_pomp_dict, theta=srjf_panel_theta_multi,
+        pomp_dict=srjf_pomp_dict, theta=pp.PanelParameters(starts),
     )
     panel.pfilter(
-        J=J_pf_eval, reps=Npf_reps, key=jax.random.key(100),
+        J=budget["J_eval"], reps=budget["pf_reps"], key=jax.random.key(key_seed),
     )
     initial_ll = np.asarray(panel.results_history[-1].logLiks.values)
     panel.mif(
-        J=J_mif, M=M_mif, rw_sd=srjf_rw_sd,
+        J=budget["J"], M=budget["Nmif"], rw_sd=srjf_rw_sd,
         block=False,
-        key=jax.random.key(101),
+        key=jax.random.key(key_seed + 1),
     )
     panel.pfilter(
-        J=J_pf_eval, reps=Npf_reps, key=jax.random.key(202),
+        J=budget["J_eval"], reps=budget["pf_reps"], key=jax.random.key(key_seed + 102),
     )
     return {
         "initial_ll":  initial_ll,
@@ -1356,14 +1359,15 @@ TIMINGS["srjf_start_pfilter"] = srjf_start_archive.system_time["elapsed"]
 #| label: srjf-search-stew
 #| code-fold: false
 
-srjf_saved_names = pp.stew(
-    file="srjf_mif_search.stew.pkl",
-    expr="""
+SRJF_STEW_EXPR = """
         mif_out = _run_srjf_mif()
         mif_ll_arr = mif_out["ll_arr"]
         mif_traces = mif_out["traces"]
         srjf_final_theta = mif_out["final_theta"]
-    """,
+    """
+srjf_saved_names = pp.stew(
+    file="srjf_mif_search.stew.pkl",
+    expr=SRJF_STEW_EXPR,
     dir=CACHE_DIR,
     dependson=CACHE_METADATA,
     compatibility="R",
@@ -1372,6 +1376,269 @@ TIMINGS["srjf_mif_search"] = _system_time["elapsed"]
 ```
 
 The document also enables Quarto's execution cache with `execute.cache: true`. That cache can reuse notebook outputs without executing Python; `bake` and `stew` check their archives when Python runs. An initial computation is still required. After changing external data, the installed package, or environment settings, use `quarto render daphnia_tut_pypomp_advanced.qmd --cache-refresh` so the dependency checks execute. To also recompute every saved analysis, set `DAPHNIA_FORCE_RECOMPUTE=1` for that command. The existing provenance checks conservatively invalidate analysis archives whenever the QMD changes. See the [installation and cache instructions](README.md#prerequisites) for the required package revision and `jupyter-cache` dependency.
+
+##### Measuring computation, saving, and reuse
+
+An archive saves time by avoiding repeated computation; it does not accelerate the particle filter or MIF itself. The first call computes the result and writes it to disk, which adds overhead. A matching later call reads that result instead. The following experiment measures all three paths: direct computation without an archive, computation plus saving to a new archive, and loading that archive. It also checks that loading returns the complete saved result and does not call the computation helper.
+
+The demonstration uses the same SRJF model and helpers as the analysis, with a separate run-level-1 budget: 50 particles, two MIF iterations, three starts, and two likelihood replicates. This keeps the demonstration small even when the main analysis uses run level 3. We time one warm-up call separately, including any compilation still needed. We then report medians over three direct/save/load trials with identical inputs and explicit JAX keys. Each save uses a new temporary file, and each load uses a fresh workspace. The timer covers the complete call, including dependency hashing, serialization, and file I/O. Results are materialized as NumPy arrays and pandas tables before returning, and the timer also waits for any remaining JAX array results.
+
+```{python}
+#| label: archive-demo-helpers
+#| code-fold: true
+
+import sys
+import tempfile
+
+
+def _archive_max_error(expected, actual):
+    """Check every structure/label/dtype; return the largest numeric difference."""
+    assert type(expected) is type(actual), "Restored object type changed"
+    if isinstance(expected, pd.DataFrame):
+        pd.testing.assert_index_equal(expected.index, actual.index, exact=True)
+        pd.testing.assert_index_equal(expected.columns, actual.columns, exact=True)
+        assert expected.dtypes.equals(actual.dtypes), "Table dtypes changed"
+        return max((_archive_max_error(expected[c].to_numpy(), actual[c].to_numpy())
+                    for c in expected.columns), default=0.0)
+    if isinstance(expected, np.ndarray):
+        assert expected.shape == actual.shape, "Array shape changed"
+        assert expected.dtype == actual.dtype, "Array dtype changed"
+        if expected.dtype.kind not in "biufc":
+            np.testing.assert_array_equal(expected, actual)
+            return 0.0
+        same = (expected == actual) | (np.isnan(expected) & np.isnan(actual))
+        if np.all(same):
+            return 0.0
+        if not np.all(np.isfinite(expected[~same]) & np.isfinite(actual[~same])):
+            return float("inf")
+        difference = np.subtract(expected[~same], actual[~same],
+                                 dtype=np.result_type(expected.dtype, np.float64))
+        return float(np.max(np.abs(difference)))
+    if isinstance(expected, dict):
+        assert expected.keys() == actual.keys(), "Saved variable/parameter names changed"
+        return max((_archive_max_error(expected[k], actual[k]) for k in expected),
+                   default=0.0)
+    if isinstance(expected, (list, tuple)):
+        assert len(expected) == len(actual), "Number of saved items changed"
+        return max((_archive_max_error(a, b) for a, b in zip(expected, actual)),
+                   default=0.0)
+    assert expected == actual, "Saved nonnumeric value changed"
+    return 0.0
+
+
+def _archive_timed(call):
+    started = time.perf_counter()
+    result = call()
+    jax.block_until_ready(result)
+    return result, time.perf_counter() - started
+
+
+DEMO_STEW_EXPR = SRJF_STEW_EXPR.replace("_run_srjf_mif()", "_counted_compute()")
+SRJF_SAVED_NAMES = {"mif_out", "mif_ll_arr", "mif_traces", "srjf_final_theta"}
+
+
+def _demo_archive(operation, filename, directory, compute, dependencies):
+    # A new namespace on every call prevents old variables from masking a miss.
+    scope = {"_counted_compute": compute}
+    options = dict(file=filename, dir=directory, envir=scope,
+                   dependson=dependencies, compatibility="R")
+    if operation == "bake":
+        return pp.bake(expr="_counted_compute()", **options).value
+    names = pp.stew(expr=DEMO_STEW_EXPR, **options)
+    return {name: scope[name] for name in names}
+```
+
+```{python}
+#| label: archive-timing-and-correctness
+#| code-fold: true
+
+DEMO_BUDGET = dict(RUN_LEVELS[1])
+demo_starts, _ = make_quality_panel_starts(
+    srjf_panel_shared_df, srjf_panel_unit_df, seed=100, fixed=("sigSn",),
+    qualities=start_quality_schedule(DEMO_BUDGET["n_starts"]),
+)
+demo_timing_rows, demo_check_rows, demo_invalidation_rows = [], [], []
+
+# Only these scratch archives are removed afterwards; analysis archives persist.
+with tempfile.TemporaryDirectory(prefix="archive-demo-", dir=CACHE_DIR) as demo_dir:
+    for operation in ("bake", "stew"):
+        demo_seed = 0 if operation == "bake" else 100
+        helper_calls = 0
+
+        def _counted_compute():
+            global helper_calls
+            helper_calls += 1
+            if operation == "bake":
+                return _evaluate_srjf_start(budget=DEMO_BUDGET, key_seed=demo_seed)
+            return _run_srjf_mif(budget=DEMO_BUDGET, starts=demo_starts,
+                                 key_seed=demo_seed)
+
+        dependencies = dict(tutorial=CACHE_METADATA, budget=DEMO_BUDGET,
+                            start_seed=100, key_seed=demo_seed)
+        _, warmup_seconds = _archive_timed(_counted_compute)
+        elapsed = {path: [] for path in ("direct", "save", "load")}
+        calls = {path: 0 for path in elapsed}
+        direct_error = 0.0
+
+        for trial in range(3):
+            filename = f"{operation}-{trial}.pkl"
+
+            # 1. No bake/stew: run the actual computation each time.
+            before = helper_calls
+            direct, seconds = _archive_timed(_counted_compute)
+            elapsed["direct"].append(seconds)
+            calls["direct"] += helper_calls - before
+
+            # 2. New archive: compute the same result and save it.
+            before = helper_calls
+            saved, seconds = _archive_timed(lambda: _demo_archive(
+                operation, filename, demo_dir, _counted_compute, dependencies))
+            elapsed["save"].append(seconds)
+            calls["save"] += helper_calls - before
+
+            # 3. Same archive and dependencies: restore into a fresh workspace.
+            before = helper_calls
+            loaded, seconds = _archive_timed(lambda: _demo_archive(
+                operation, filename, demo_dir, _counted_compute, dependencies))
+            elapsed["load"].append(seconds)
+            calls["load"] += helper_calls - before
+
+            if operation == "stew":
+                assert saved.keys() == SRJF_SAVED_NAMES
+            assert _archive_max_error(saved, loaded) == 0.0
+            direct_error = max(direct_error, _archive_max_error(
+                direct, saved if operation == "bake" else saved["mif_out"]))
+
+        assert calls == {"direct": 3, "save": 3, "load": 0}
+        med = {path: float(np.median(values)) for path, values in elapsed.items()}
+        demo_timing_rows.append({
+            "archive": operation, "warm-up (s)": warmup_seconds,
+            "direct (s)": med["direct"], "compute + save (s)": med["save"],
+            "load (s)": med["load"], "direct / load": med["direct"] / med["load"],
+        })
+        demo_check_rows.append({
+            "archive": operation, "saved = loaded": True,
+            "max |direct - saved|": direct_error,
+            "helper calls: direct/save/load": f"{calls['direct']}/{calls['save']}/{calls['load']}",
+        })
+
+        # Change a real input to the helper and declare it in dependson.
+        # Reuse the same filename and expression: the dependency change must miss.
+        demo_seed += 1
+        dependencies = dict(dependencies, key_seed=demo_seed)
+        before = helper_calls
+        changed = _demo_archive(
+            operation, filename, demo_dir, _counted_compute, dependencies)
+        changed_calls = helper_calls - before
+        before = helper_calls
+        reloaded = _demo_archive(
+            operation, filename, demo_dir, _counted_compute, dependencies)
+        reload_calls = helper_calls - before
+        assert (changed_calls, reload_calls) == (1, 0)
+        assert _archive_max_error(changed, reloaded) == 0.0
+        changed_direct = _counted_compute()
+        demo_invalidation_rows.append({
+            "archive": operation, "new JAX key seed": demo_seed,
+            "helper calls: changed/repeat": f"{changed_calls}/{reload_calls}",
+            "output changed": _archive_max_error(saved, changed) > 0.0,
+            "max |new direct - saved|": _archive_max_error(
+                changed_direct, changed if operation == "bake" else changed["mif_out"]),
+            "saved = reloaded": True,
+        })
+
+print(f"Archive demonstration: {jax.default_backend()}, "
+      f"{'float64' if double_precision else 'float32'}, budget={DEMO_BUDGET}")
+print("\nWall times in seconds; medians of three trials after one warm-up:")
+print(table_text(pd.DataFrame(demo_timing_rows)))
+print("\nComplete output checks (across all three trials):")
+print(table_text(pd.DataFrame(demo_check_rows)))
+for row in demo_timing_rows:
+    speedup = row["direct / load"]
+    if speedup > 1:
+        print(f"{row['archive']}: loading was {speedup:.4g} times faster than "
+              "direct computation in this run.")
+    else:
+        print(f"{row['archive']}: loading did not save time in this run "
+              f"(direct/load = {speedup:.4g}).")
+```
+
+The equality checks cover every initial and final likelihood entry, every trace row, and every final shared and unit-specific parameter table, including names, shapes, index/column labels, and dtypes. Saved-versus-loaded equality is required exactly. The separate maximum direct-versus-saved difference measures reproducibility of a new computation with the same JAX keys; zero means numerical equality, while a nonzero value is reported rather than concealed. Float32 and float64 renders perform these checks separately; results across precisions need not be equal. These checks establish faithful reuse of results; likelihood accuracy and optimizer convergence are assessed in the scientific diagnostics below.
+
+The ratio `direct / load` measures the benefit of reuse for this workload on the current machine. The first save still pays the computation cost, and small results or slow storage can make loading less beneficial. These repeated in-process loads can benefit from the operating system's file cache; they do not measure a cold filesystem or the full run-level-3 speedup. Quarto may reuse the displayed measurements on later renders. Use `--cache-refresh` to measure them again; the demonstration always creates new scratch archives whenever its Python cells execute.
+
+##### Changing an input invalidates its archive
+
+The experiment also changes the JAX key seed used by each real computation and updates that value in `dependson`, while retaining the same filename and expression. The first call must run the helper once, and a repeated call must run it zero times. We compare the new saved result against a direct computation with the new key, then verify exact restoration again. Archive functions do not automatically discover changes inside referenced helpers or external data: declaring those inputs is essential. The main analysis includes the QMD and data hashes in `CACHE_METADATA` for this reason.
+
+```{python}
+#| label: archive-dependency-results
+#| echo: false
+
+print(table_text(pd.DataFrame(demo_invalidation_rows)))
+```
+
+##### Restoring the full analysis in a fresh Python process
+
+The small benchmark above is supplemented by a reload of the actual analysis archives created earlier, at the selected run level. The child process imports Pypomp but has no SRJF model or computation helpers; a cache miss would therefore fail. It uses the CPU backend to load the saved NumPy arrays and pandas tables without reserving additional GPU memory; their stored precision is preserved, and no SRJF computation runs in the child. Its code is embedded here, so no separate Python script is required. It returns both the `bake` likelihood array and all four `stew` variables for complete equality checks against the current analysis. The times below measure the two archive calls inside that process; the separately reported round trip also includes Python startup, imports, and result transfer.
+
+```{python}
+#| label: archive-fresh-process
+#| code-fold: true
+
+fresh_process_code = r'''
+import pickle
+import sys
+import time
+import pypomp as pp
+
+request = pickle.load(sys.stdin.buffer)
+options = dict(dir=request["directory"], dependson=request["dependencies"],
+               compatibility="R")
+started = time.perf_counter()
+initial = pp.bake(file="srjf_start_pfilter.bake.pkl",
+                  expr="_evaluate_srjf_start()", envir={}, **options).value
+bake_seconds = time.perf_counter() - started
+scope = {}
+started = time.perf_counter()
+names = pp.stew(file="srjf_mif_search.stew.pkl", expr=request["stew_expr"],
+                envir=scope, **options)
+stew_seconds = time.perf_counter() - started
+pickle.dump(dict(initial=initial, names=names,
+                 outputs={name: scope[name] for name in names},
+                 bake_seconds=bake_seconds, stew_seconds=stew_seconds),
+            sys.stdout.buffer)
+'''
+
+request_bytes = pickle.dumps(dict(directory=str(CACHE_DIR.resolve()),
+                                 dependencies=CACHE_METADATA,
+                                 stew_expr=SRJF_STEW_EXPR))
+started = time.perf_counter()
+child = subprocess.run([sys.executable, "-c", fresh_process_code],
+                       input=request_bytes, capture_output=True,
+                       env={**os.environ, "JAX_PLATFORMS": "cpu"})
+fresh_process_seconds = time.perf_counter() - started
+if child.returncode:
+    raise RuntimeError("Fresh-process archive reload failed:\n" + child.stderr.decode())
+restored = pickle.loads(child.stdout)
+assert set(restored["names"]) == SRJF_SAVED_NAMES
+assert _archive_max_error(srjf_start_ll_arr, restored["initial"]) == 0.0
+analysis_outputs = dict(mif_out=mif_out, mif_ll_arr=mif_ll_arr,
+                        mif_traces=mif_traces, srjf_final_theta=srjf_final_theta)
+assert _archive_max_error(analysis_outputs, restored["outputs"]) == 0.0
+print(f"Full analysis archives: run level {run_level}, "
+      f"{'float64' if double_precision else 'float32'}")
+print(table_text(pd.DataFrame([
+    {"archive": "bake", "load (s)": restored["bake_seconds"],
+     "all outputs restored exactly": True, "computation helpers available": False},
+    {"archive": "stew", "load (s)": restored["stew_seconds"],
+     "all outputs restored exactly": True, "computation helpers available": False},
+])))
+print(f"bake: likelihood array {restored['initial'].shape}, "
+      f"dtype={restored['initial'].dtype}")
+print("stew: " + ", ".join(restored["names"]))
+print(f"Fresh-process round trip: {fresh_process_seconds:.4g} s")
+del restored, analysis_outputs, child, request_bytes
+```
 
 ```{python}
 #| label: srjf-mif-summary
