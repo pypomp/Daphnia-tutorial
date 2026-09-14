@@ -1,8 +1,9 @@
 ## PanelPOMP data analysis in R: A four-species ecological system
 
-The rendered tutorial is
-[`tut.html`](https://pypomp.github.io/Daphnia-tutorial/R-code/tut.html).
-The source is `tut.qmd`.
+**Status: complete.** The rendered tutorial is
+[`daphnia_tut_R.html`](https://pypomp.github.io/Daphnia-tutorial/R-code/daphnia_tut_R.html).
+The source is `daphnia_tut_R.qmd`; `Makefile` renders it and `data/` holds the
+Excel data and the two CSV extracts it reads.
 
 ### Prerequisites
 

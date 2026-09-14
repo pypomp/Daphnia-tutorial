@@ -4,6 +4,9 @@
 **/.*.swp
 *~
 *.save
+findings.md
+progress.md
+task_plan.md
 
 # --- Quarto working state ---
 **/.quarto/
@@ -38,3 +41,9 @@ Python-code/cache_*/
 *.pe[0-9]*
 *.po[0-9]*
 *.log
+
+# --- local planning notes and validation evidence (kept out of the repo) ---
+findings.md
+progress.md
+task_plan.md
+quality_reports/
